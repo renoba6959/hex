@@ -32,7 +32,7 @@ svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:none
 .men,.badge{font-family:var(--sans);font-weight:700;font-size:9px;fill:var(--ink);text-anchor:middle;paint-order:stroke;stroke:var(--map);stroke-width:3px}
 .badge{font-family:var(--serif);font-size:10px}
 .sel-ring{fill:none;stroke:var(--ink);stroke-width:2;stroke-dasharray:4 3}
-.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:.35rem}
+.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:.35rem}
 .maps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.3rem}
 .maps button{width:100%;text-align:left;display:flex;justify-content:space-between;gap:.5rem}
 .maps .tag{font-weight:500;font-size:.78rem;opacity:.8}
@@ -48,7 +48,7 @@ textarea{width:100%;min-height:7rem;font-family:ui-monospace,Menlo,monospace;fon
 <body>
 <header>
   <h1>マップ編集</h1>
-  <p>地形・部隊・配置範囲を作れます。「ゲームで使う」で開いているゲーム画面に送られます。</p>
+  <p>地形・拠点・部隊・配置範囲を作れます。「ゲームで使う」で開いているゲーム画面に送られます。</p>
 </header>
 <div class="bar"><div class="bar-in">
   <button id="bUse">ゲームで使う</button>
@@ -63,7 +63,7 @@ textarea{width:100%;min-height:7rem;font-family:ui-monospace,Menlo,monospace;fon
   <aside class="panel">
     <div class="box">
       <div class="tabs" role="tablist">
-        <button data-mode="terrain">地形</button><button data-mode="units">部隊</button><button data-mode="zones">配置範囲</button>
+        <button data-mode="terrain">地形</button><button data-mode="features">拠点</button><button data-mode="units">部隊</button><button data-mode="zones" title="配置範囲">範囲</button>
       </div>
       <div id="tool" style="margin-top:.7rem"></div>
     </div>
@@ -71,6 +71,7 @@ textarea{width:100%;min-height:7rem;font-family:ui-monospace,Menlo,monospace;fon
     <div class="box">
       <h2>マップ</h2>
       <ul class="maps" id="maps"></ul>
+      <div class="row"><label class="chk">大きさ <input type="number" id="iCols" aria-label="列の数"> 列 × <input type="number" id="iRows" aria-label="行の数"> 行</label><button class="ghost" id="bSize">変更</button></div>
     </div>
     <details class="box">
       <summary>書き出し・読み込み</summary>
@@ -87,16 +88,15 @@ const cfg=loadCfg();
 const TER_LABEL={plain:'平地',forest:'森',hill:'丘',mountain:'山',river:'川'},SIDE_NAME={blue:'青軍',red:'赤軍'};
 const TOTSU='M-16,9 L16,9 L16,-5 L7,-5 L7,-14 L-7,-14 L-7,-5 L-16,-5 Z';
 const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let db=loadMaps(), editId=db.current, mode='terrain', brush='forest', zoneBrush='blue', side='blue', utype='spear';
+let db=loadMaps(), editId=db.current, mode='terrain', brush='forest', featBrush='village', zoneBrush='blue', side='blue', utype='spear';
 let selKey=null, drag=null, painting=false, saveTimer=null;
 const svg=document.getElementById('board');
-svg.setAttribute('viewBox',VB.join(' '));
 const cur=()=>findMap(db,editId);
 const setMsg=t=>{document.getElementById('status').textContent=t;};
 const crOf=k=>{const [q,r]=k.split(',').map(Number);return {col:colOf(q,r),row:r};};
 const unitAtKey=k=>{const {col,row}=crOf(k);return cur().units.find(u=>u.col===col&&u.row===row);};
 const selUnit=()=>selKey?unitAtKey(selKey):null;
-const cavOnMountain=(type,k)=>type==='cav'&&terOf(cells.get(k))==='mountain';
+const cavOnMountain=(type,k)=>type==='cav'&&(terOf(cells.get(k))==='mountain'||featureAt.get(k)?.type==='fence'); // 騎兵は山と柵に置けない
 function save(unitsChanged){
   if(unitsChanged)cur().rev=(cur().rev||0)+1; // 部隊を変えたら、ゲームはこのマップの初期配置から始め直す
   clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveMaps(db);setMsg('保存しました');},300);
@@ -104,7 +104,7 @@ function save(unitsChanged){
 function editable(){const m=cur();if(m.builtin){setMsg('「'+m.name+'」は組み込みのマップなので編集できません。「複製」してから編集してください');return false;}return true;}
 
 /* ---- 描画 ---- */
-function drawBase(){useMap(cur());document.getElementById('base').innerHTML=boardSVG();}
+function drawBase(){useMap(cur());svg.setAttribute('viewBox',VB.join(' '));document.getElementById('base').innerHTML=boardSVG();}
 function drawGrid(){
   let h='';
   cells.forEach((c,k)=>{const z=zoneAt.get(k);h+='<polygon class="cell'+(z?' zone-'+z:'')+(drag&&drag.over===k?' drop':'')+'" data-key="'+k+'" points="'+hexPts(c.x,c.y)+'"/>';});
@@ -134,6 +134,11 @@ function drawTool(){
     t.innerHTML='<div class="brushes">'+TERRAINS.map(x=>'<button class="ghost'+(x===brush?' on':'')+'" data-t="'+x+'"><img src="tiles/'+x+'.png" alt="">'+TER_LABEL[x]+'</button>').join('')+'</div>'+
       '<p class="hint" style="margin-top:.5rem">クリックかドラッグで塗ります。川は隣り合う川マスどうしが自動でつながり、行き止まりは山か盤の端へ延びます。</p>';
     t.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{brush=b.dataset.t;drawTool();});
+  }else if(mode==='features'){
+    const F=[['honjin-blue','青の本陣'],['honjin-red','赤の本陣'],['village','村'],['jinchi','陣地'],['fort','砦（7）'],['fence','柵'],['none','消す']];
+    t.innerHTML='<div class="pick">'+F.map(([f,l])=>'<button class="'+(f===featBrush?(f==='honjin-blue'?'b-blue ':f==='honjin-red'?'b-red ':'')+'on':'ghost')+'" data-f="'+f+'">'+l+'</button>').join('')+'</div>'+
+      '<p class="hint" style="margin-top:.5rem">本陣は各軍に1つで、置き直すと前の本陣は消えます。敵が本陣に入るとその軍の負けです。村は隠れられて兵が回復します。陣地（1マス）と砦は中の部隊の防御を上げます。砦は選んだマスを中央に周りの6マスごと置かれ、中央が特に堅くなります（どこか1マスを消すと砦全体が消えます）。柵は騎兵を止めます。柵・陣地・砦は攻撃で壊せます。</p>';
+    t.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{featBrush=b.dataset.f;drawTool();});
   }else if(mode==='units'){
     const cnt=s=>{const us=cur().units.filter(u=>u.side===s);return us.length+'部隊・'+us.reduce((n,u)=>n+(u.men||cfg.units[u.type].men),0)+'人';};
     t.innerHTML='<div class="pick">'+['blue','red'].map(s=>'<button class="'+(s===side?'b-'+s+' on':'ghost')+'" data-side="'+s+'">'+SIDE_NAME[s]+'</button>').join('')+'<span></span>'+
@@ -144,7 +149,7 @@ function drawTool(){
     t.querySelectorAll('[data-type]').forEach(b=>b.onclick=()=>{utype=b.dataset.type;drawTool();});
   }else{
     t.innerHTML='<div class="pick">'+[['blue','青軍'],['red','赤軍'],['none','消す']].map(([z,l])=>'<button class="'+(z===zoneBrush?(z==='none'?'':'b-'+z)+' on':'ghost')+'" data-z="'+z+'">'+l+'</button>').join('')+'</div>'+
-      '<p class="hint" style="margin-top:.5rem">塗ったマスが、ゲームの編成画面でその軍の部隊を動かせる範囲になります。部隊の初期配置はこの範囲の外にも置けます。</p>'+
+      '<p class="hint" style="margin-top:.5rem">塗ったマスが、ゲームの配置画面でその軍の部隊を動かせる範囲になります。部隊の初期配置はこの範囲の外にも置けます。</p>'+
       '<div class="row"><button class="ghost" id="bZoneReset"'+(cur().zones?'':' disabled')+'>既定（両端の3列）に戻す</button></div>';
     t.querySelectorAll('[data-z]').forEach(b=>b.onclick=()=>{zoneBrush=b.dataset.z;drawTool();});
     document.getElementById('bZoneReset').onclick=()=>{if(!editable())return;delete cur().zones;save(false);drawAll();drawTool();};
@@ -171,7 +176,9 @@ function drawList(){
     [m.builtin?'組み込み':'',m.id===db.current?'ゲームで使用中':''].filter(Boolean).join('・')+'</span></button></li>').join('');
   document.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>{editId=b.dataset.id;selKey=null;refresh();});
   const m=cur();
-  document.getElementById('bRename').disabled=document.getElementById('bDel').disabled=!!m.builtin;
+  document.getElementById('bRename').disabled=document.getElementById('bDel').disabled=document.getElementById('bSize').disabled=!!m.builtin;
+  const ic=document.getElementById('iCols'),ir=document.getElementById('iRows');
+  ic.value=m.cols;ir.value=m.rows;ic.min=SIZE_MIN.cols;ic.max=SIZE_MAX.cols;ir.min=SIZE_MIN.rows;ir.max=SIZE_MAX.rows;ic.disabled=ir.disabled=!!m.builtin;
   document.getElementById('wrap').classList.toggle('readonly',!!m.builtin);
 }
 function refresh(){drawAll();drawList();drawTool();setMsg(cur().builtin?'組み込みのマップは編集できません。「複製」してから編集してください':'');}
@@ -184,6 +191,26 @@ function paintAt(k){
   if(mode==='terrain'){
     if((m.terrain[ck]||'plain')===brush)return;
     if(brush==='plain')delete m.terrain[ck];else m.terrain[ck]=brush;
+    save(false);drawBase();drawUnits();
+  }else if(mode==='features'){
+    if(!m.features)m.features={};
+    const [type,fside]=featBrush.split('-'),old=m.features[ck];
+    const removeFort=fid=>Object.keys(m.features).forEach(x=>{if(m.features[x].fid===fid)delete m.features[x];}); // 砦は7マスまとめて消す
+    const clear=x=>{const o=m.features[x];if(!o)return;if(o.type==='fort')removeFort(o.fid);else delete m.features[x];};
+    if(featBrush==='none'){if(!old)return;clear(ck);}
+    else if(type==='fort'){
+      if(old&&old.type==='fort'&&old.part==='core')return;
+      // 選んだマスを中央に、周りの6マス（盤の中だけ）ごと置く
+      const [q,r]=k.split(',').map(Number),parts=[k,...DIRS.map(d=>key(q+d[0],r+d[1])).filter(x=>cells.has(x))];
+      const crk=x=>{const o=crOf(x);return o.col+','+o.row;};
+      parts.forEach(x=>clear(crk(x)));
+      parts.forEach((x,i)=>{m.features[crk(x)]={type:'fort',part:i?'ring':'core',fid:ck};});
+    }else{
+      if(old&&old.type===type&&old.side===fside)return;
+      clear(ck);
+      if(type==='honjin')Object.keys(m.features).forEach(x=>{const o=m.features[x];if(o.type==='honjin'&&o.side===fside)delete m.features[x];}); // 本陣は各軍に1つ
+      m.features[ck]=type==='honjin'?{type,side:fside}:{type};
+    }
     save(false);drawBase();drawUnits();
   }else if(mode==='zones'){
     if(!m.zones)m.zones=defaultZones();
@@ -230,6 +257,18 @@ document.addEventListener('keydown',e=>{
 });
 
 /* ---- マップの管理 ---- */
+// 盤の大きさを変える。はみ出す地形・拠点・部隊・配置範囲は消える
+document.getElementById('bSize').onclick=()=>{
+  const m=cur();if(!editable())return;
+  const cols=Math.round(+document.getElementById('iCols').value),rows=Math.round(+document.getElementById('iRows').value);
+  if(!(cols>=SIZE_MIN.cols&&cols<=SIZE_MAX.cols&&rows>=SIZE_MIN.rows&&rows<=SIZE_MAX.rows)){setMsg('大きさは '+SIZE_MIN.cols+'〜'+SIZE_MAX.cols+' 列、'+SIZE_MIN.rows+'〜'+SIZE_MAX.rows+' 行です');return;}
+  if(cols===m.cols&&rows===m.rows)return;
+  const next=cleanMap({...m,cols,rows});
+  const lost=(Object.keys(m.terrain).length-Object.keys(next.terrain).length)+(Object.keys(m.features||{}).length-Object.keys(next.features).length)+(m.units.length-next.units.length);
+  if(lost>0&&!confirm('盤の外に出る地形・拠点・部隊（'+lost+'件）は消えます。よろしいですか？'))return;
+  Object.assign(m,next,{rev:(m.rev||0)+1});selKey=null;
+  clearTimeout(saveTimer);saveMaps(db);refresh();setMsg('盤の大きさを '+cols+'×'+rows+' にしました');
+};
 const newId=()=>'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 function addMap(src){const m=cleanMap({...src,id:newId()});db.maps.push(m);editId=m.id;selKey=null;saveMaps(db);refresh();return m;}
 const STD=BUILTIN_MAPS[0];
@@ -246,7 +285,7 @@ document.getElementById('bUse').onclick=()=>{
   if(g)g.postMessage({type:MAP_MSG},'*');
   setMsg('「'+cur().name+'」をゲームで使います（戦闘中なら次の戦闘から）');
 };
-document.getElementById('bExport').onclick=()=>{const m=cur(),o={name:m.name,terrain:m.terrain,units:m.units};if(m.zones)o.zones=m.zones;document.getElementById('io').value=JSON.stringify(o);};
+document.getElementById('bExport').onclick=()=>{const m=cur(),o={name:m.name,cols:m.cols,rows:m.rows,terrain:m.terrain,features:m.features||{},units:m.units};if(m.zones)o.zones=m.zones;document.getElementById('io').value=JSON.stringify(o);};
 document.getElementById('bCopy').onclick=async()=>{const ta=document.getElementById('io');try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}setMsg('コピーしました');};
 document.getElementById('bImport').onclick=()=>{
   try{const o=JSON.parse(document.getElementById('io').value);if(!o||typeof o!=='object'||typeof o.terrain!=='object')throw 0;addMap({...o,name:o.name||'読み込んだマップ'});setMsg('読み込みました');}

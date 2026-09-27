@@ -61,7 +61,7 @@ dt{color:var(--muted)} dd{margin:0}
     <div class="box"><h2>戦闘記録</h2><ol id="log"></ol></div>
     <details class="box">
       <summary>操作説明</summary>
-      <p class="hint" style="margin-top:.4rem">ユニットを選ぶと、移動できるマスに消費移動力、攻撃できる敵に予想される損害の人数が出ます（「反」は反撃で失う人数）。兵数が多いほど相手に与える損害も大きくなります。前方から攻撃すると反撃を受けます。薄い色の範囲は攻撃可能範囲です。<br>地形の効果はユニットの情報欄に出ます。<br>キー操作：Q／E 旋回、H 隠蔽、M 行軍の切り替え、Z 取り消し、Enter ターン終了、Esc 選択解除</p>
+      <p class="hint" style="margin-top:.4rem">ユニットを選ぶと、移動できるマスに消費移動力、攻撃できる敵に予想される損害の人数が出ます（「反」は反撃で失う人数）。兵数が多いほど相手に与える損害も大きくなります。前方から攻撃すると反撃を受けます。薄い色の範囲は攻撃可能範囲です。<br>地形の効果はユニットの情報欄に出ます。<br>本陣に敵が入ると負けです。柵は騎兵を止めます。柵や砦は、中に部隊がいても攻撃して壊せます（中の部隊か拠点かを選びます）。槍兵は柵と陣地を作れます。陣地や砦（7マス、中央が特に堅い）は中の部隊の防御を上げます。<br>キー操作：Q／E 旋回、H 隠蔽、B 柵を作る・F 陣地を築く（槍兵）、M 行軍の切り替え、Z 取り消し、Enter ターン終了、Esc 選択解除</p>
     </details>
   </aside>
 </main>
@@ -83,9 +83,20 @@ function saveFormation(){
 let cfg=loadCfg();
 
 const COVER=new Set(['forest','hill','mountain']); // 隠れられる地形
-const onCover=p=>COVER.has(terOf(p));
+const onCover=p=>COVER.has(terOf(p))||featOf(p)?.type==='village'; // 村にも隠れられる
+// 柵・陣地・砦の状態（マスのキー → {hp, done}）。hp は工事でたまり攻撃で減る。done＝一度完成した（騎兵を止めるのは完成後）
+let struct={};
+const STRUCTS=['fence','jinchi','fort'];
+const maxOf=type=>({fence:cfg.fenceHp,jinchi:cfg.jinchiHp,fort:cfg.fortHp})[type];
+const structType=p=>{const f=featOf(p);return f&&STRUCTS.includes(f.type)&&struct[key(p.q,p.r)]?.hp>0?f.type:null;};
+const structName=p=>{const f=featOf(p);return f.type==='fort'?(f.part==='core'?'砦の中央':'砦の外周'):{fence:'柵',jinchi:'陣地'}[f.type];};
+const fullDef=p=>{const f=featOf(p);return f.type==='fence'?cfg.fenceDef:f.type==='jinchi'?cfg.jinchiDef:f.part==='core'?cfg.fortCoreDef:cfg.fortRingDef;}; // 完成時の防御倍率
+const ratioOf=p=>{const t=structType(p);return t?Math.min(1,struct[key(p.q,p.r)].hp/maxOf(t)):0;}; // 効果の割合＝耐久の割合
+const fenceAt=p=>structType(p)==='fence'&&struct[key(p.q,p.r)].done; // 騎兵を止める柵
+const fmt=x=>Math.round(x*10)/10;
+const honjinOf=side=>{for(const [k,f] of featureAt)if(f.type==='honjin'&&f.side===side){const [q,r]=k.split(',').map(Number);return {q,r};}return null;};
 const terCfg=p=>cfg.terrain[terOf(p)]||{move:0,def:1,atk:1};
-const cavBlocked=(type,p)=>type==='cav'&&terOf(p)==='mountain'; // 騎兵は山に入れない
+const cavBlocked=(type,p)=>type==='cav'&&(terOf(p)==='mountain'||fenceAt(p)); // 騎兵は山と柵に入れない
 const TOTSU='M-16,9 L16,9 L16,-5 L7,-5 L7,-14 L-7,-14 L-7,-5 L-16,-5 Z';
 
 function relAngle(u,pos){
@@ -99,6 +110,7 @@ let state, showZoc=false;
 function newGame(edit){
   gen++;busy=false;
   const db=loadMaps(),map=findMap(db,db.current);useMap(map); // 戦闘中にマップが編集されても、この戦闘の地形は変わらない
+  struct={};featureAt.forEach((f,k)=>{if(STRUCTS.includes(f.type))struct[k]={hp:maxOf(f.type),done:true};}); // マップの柵・陣地・砦は完成済み
   let id=0;const units=[];
   const add=(side,type,q,r,f,men)=>{
     if(!TYPES.includes(type)||!SIDE_NAME[side]||!cells.has(key(q,r))||units.some(u=>u.q===q&&u.r===r))return;
@@ -131,7 +143,7 @@ const DEF_F={blue:0,red:3}; // 青は右、赤は左を向く
 function makeUnit(id,side,type,q,r,f,men){
   const men0=Math.max(1,Math.round(men||cfg.units[type].men));
   return {id,no:0,side,type,q,r,f:((f|0)%6+6)%6,men0,hp:men0*cfg.units[type].hp,mp:0,attacked:false,dis:false,
-    hidden:false,pending:false,sprung:false,mark:null,shotFrom:null};
+    hidden:false,pending:false,sprung:false,mark:null,shotFrom:null,worked:false}; // worked＝工事で手番を終えた（次の手番まで無防備）
   // hidden＝隠蔽中、pending＝手番の終わりに隠れる、sprung＝この隠蔽での奇襲は済んだ、mark＝敵が最後に見た位置、shotFrom＝矢を受けた方向
 }
 function renumber(units){const n={};units.forEach(u=>{const k=u.side+u.type;u.no=n[k]=(n[k]||0)+1;});}
@@ -142,7 +154,15 @@ const deployable=u=>u.side==='blue'||!aiRed;
 function rotateSetup(u,dl){if(!deployable(u))return;u.f=(u.f+dl+6)%6;formChanged();}
 function placeSetup(u,q,r){if(!deployable(u)||!inZone(u.side,q,r)||unitAt(q,r)||cavBlocked(u.type,{q,r}))return;u.q=q;u.r=r;formChanged();}
 function resetFormation(){delete formation.byMap[state.mapId];try{localStorage.setItem(FORM_STORE,JSON.stringify(formation));}catch(e){}newGame(true);}
-function startSide(side){state.units.filter(u=>u.side===side).forEach(u=>{u.mp=cfg.units[u.type].mp;u.attacked=false;u.dis=false;});}
+function startSide(side){state.units.filter(u=>u.side===side).forEach(u=>{
+  u.mp=cfg.units[u.type].mp;u.attacked=false;u.dis=false;u.worked=false;
+  // 村（1割）や自軍の本陣（2割）にいて敵と接していなければ、最初の兵数まで回復する
+  const f=featOf(u),rate=f?.type==='village'?cfg.villageHeal:f?.type==='honjin'&&f.side===u.side?cfg.honjinHeal:0;
+  if(rate>0&&!inContact(u)&&u.hp<maxHp(u)){
+    const before=menOf(u);u.hp=Math.min(maxHp(u),u.hp+maxHp(u)*rate);
+    if(menOf(u)>before)log(uname(u)+'が'+(f.type==='village'?'村':'本陣')+'で'+(menOf(u)-before)+'人回復（'+menOf(u)+'人）','sys',u.side);
+  }
+});}
 const maxHp=u=>u.men0*cfg.units[u.type].hp;
 const menOf=u=>Math.max(0,Math.ceil(u.hp/cfg.units[u.type].hp-1e-9)); // 残りHPを1人あたりHPで割って切り上げ
 const lossOf=(u,dmg)=>menOf(u)-menOf({...u,hp:u.hp-dmg}); // ダメージで減る人数
@@ -163,10 +183,14 @@ function moveCost(u,d){
   const rel=(d-u.f+6)%6,dirCost=rel===0?cfg.mvF:(rel===1||rel===5)?cfg.mvFD:(rel===2||rel===4)?cfg.mvRD:cfg.mvR;
   const dest={q:u.q+DIRS[d][0],r:u.r+DIRS[d][1]};
   if(cavBlocked(u.type,dest))return Infinity;
-  return dirCost+terCfg(dest).move; // 進入先の地形コストを加算
+  if(fenceAt(dest))return cfg.fenceMove; // 柵は向きに関係なく一定のコストで乗り越える
+  const st=structType(dest);
+  return dirCost+terCfg(dest).move+(st==='fort'||st==='jinchi'?cfg.fortMove:0); // 進入先の地形（と陣地・砦）のコストを加算
 }
 const stepCost=(u,d)=>moveCost(u,d)+(u.hidden&&state.march!=='normal'?cfg.hideMove:0); // 隠蔽行軍は割増
-function canStrike(a,t){const d=dist(a,t),U=cfg.units[a.type];return d>=U.rmin&&d<=U.rmax&&relAngle(a,t)<=90+EPS;}
+const inReach=(a,p)=>{const d=dist(a,p),U=cfg.units[a.type];return d>=U.rmin&&d<=U.rmax&&relAngle(a,p)<=90+EPS;};
+function canStrike(a,t){if(a.type==='cav'&&fenceAt(t))return false; // 柵にこもる部隊へ騎兵は突撃できない
+  return inReach(a,t);}
 function canAttack(a,t){
   if(a.attacked||a.pending||t.side===a.side||t.hidden)return false;
   return canStrike(a,t);
@@ -181,14 +205,19 @@ function computeAttack(a,t,amb){
   const ad=a.dis?cfg.disorder:1,dd=t.dis?cfg.disorder:1;
   const sf=(t.type==='spear'&&a.type==='cav'&&r<=90+EPS)?cfg.spearFrontDef:1;
   const ta=terOf(a),td=terOf(t),tam=terCfg(a).atk*(a.type==='cav'&&ta==='forest'?cfg.cavForest:1),tdm=terCfg(t).def;
-  const am=amb?cfg.ambush:1;
-  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*dm*mx*ad*tam*am/(D.def*dd*sf*tdm))); // ランチェスター：損害は攻撃側の兵数に比例
+  const wk=!amb&&t.worked,am=amb||wk?cfg.ambush:1; // 工事で手番を終えた部隊は無防備（奇襲の倍率）
+  // 拠点の防御。柵・陣地・砦は耐久の割合だけ効く（例：耐久100/500なら、上がり分の20%）
+  const ft=featOf(t),st=structType(t);
+  const fd=+(st?1+(fullDef(t)-1)*ratioOf(t):ft?.type==='village'?cfg.villageDef:ft?.type==='honjin'&&ft.side===t.side?cfg.honjinDef:1).toFixed(2);
+  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*dm*mx*ad*tam*am/(D.def*dd*sf*tdm*fd))); // ランチェスター：損害は攻撃側の兵数に比例
   const notes=[cat+(dm!==1?' ×'+dm:'')];
   if(amb)notes.unshift('奇襲 ×'+cfg.ambush);
+  if(wk)notes.unshift('工事中を襲撃 ×'+cfg.ambush);
   if(mx!==1)notes.push('相性 ×'+mx);
   if(sf!==1)notes.push('槍の正面防御 ÷'+sf);
   if(tam!==1)notes.push(TER_NAME[ta]+'から攻撃 ×'+ +tam.toFixed(2));
   if(tdm!==1)notes.push(TER_NAME[td]+'の防御 ÷'+tdm);
+  if(fd!==1)notes.push((st?structName(t):{village:'村',honjin:'本陣'}[ft.type])+'の防御 ÷'+fd);
   if(a.dis)notes.push('攻撃側乱れ ×'+cfg.disorder);
   if(t.dis)notes.push('防御側乱れ');
   return {dmg,dm,cat,notes};
@@ -207,7 +236,7 @@ function computeCounter(a,t,hitDmg){
 const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uname=u=>SIDE_NAME[u.side]+cfg.units[u.type].name+u.no;
 function log(text,cls='',only=null){state.log.push({text,cls,only});} // only＝その軍にだけ見える記録
-function pushHistory(){state.history.push(JSON.stringify({units:state.units,logLen:state.log.length,winner:state.winner}));}
+function pushHistory(){state.history.push(JSON.stringify({units:state.units,struct,logLen:state.log.length,winner:state.winner}));}
 
 /* ---- actions ---- */
 function tryMove(u,d){
@@ -227,6 +256,11 @@ function tryMove(u,d){
   pushHistory();
   const rel=(d-u.f+6)%6;
   u.q=nq;u.r=nr;u.mp-=cost;if(rel===1||rel===5)u.f=d;
+  const hq=featOf(u);
+  if(hq?.type==='honjin'&&hq.side!==u.side&&!state.winner){ // 敵の本陣に入ったら勝ち
+    state.history=[];u.hidden=false;state.winner=u.side;
+    log(uname(u)+'が'+SIDE_NAME[hq.side]+'の本陣を占領','kill');log(SIDE_NAME[u.side]+'の勝利','kill');render();return;
+  }
   if(u.hidden){
     if(state.march==='normal')reveal(u,'通常行軍で姿を現した');
     else if(!onCover(u))reveal(u,'隠れ場所を出て姿を現した');
@@ -241,13 +275,74 @@ function hideUnit(u){
   pushHistory();u.mp=0;u.pending=true;
   log(uname(u)+'が隠蔽の準備（手番の終わりに'+(u.hidden?'改めて身を潜める':'隠れる')+'）','sys',u.side);render();
 }
+// 柵・砦は攻撃して壊せる（作りかけも）。壊しやすさは兵種で違う（槍に弱く、弓と騎兵には強い）
+// 部隊がこもっていても柵・砦そのものを攻撃できる（部隊を倒すか、拠点を壊すかを選ぶ）。自軍が作ったものは壊さない
+const canHitStruct=(a,p)=>{if(a.attacked||a.pending||!structType(p)||featOf(p).side===a.side||!inReach(a,p)||structDamage(a)<1)return false; // 1に満たない攻撃では壊せない
+  const g=unitAt(p.q,p.r);return !g||g.side!==a.side;};
+// 壊す量は工事と同じ基準：兵数×1人あたりの破壊量×兵種ごとの壊しやすさ（隊列が乱れていると落ちる）
+// 耐久は整数。小数点以下は切り捨て（1に満たない分は施設に効かない）
+const structRaw=a=>menOf(a)*cfg.demolishRate*cfg.fenceVs[a.type]*(a.dis?cfg.disorder:1);
+const structDamage=a=>Math.floor(structRaw(a)+1e-9);
+// こもった部隊を攻撃すると、柵・砦にも一部の損傷が入る
+const spillDamage=a=>Math.floor(structRaw(a)*cfg.structSpill+1e-9);
+function spillStruct(a,t){
+  const st=structType(t);if(!st||featOf(t).side===a.side)return;
+  const k=key(t.q,t.r),s=struct[k],dmg=spillDamage(a),name=structName(t);if(!dmg)return;
+  s.hp-=dmg;log('　'+name+'にも'+dmg+'の損傷'+(s.hp>0?'（残り'+s.hp+'／'+maxOf(st)+'）':''));
+  if(s.hp<=0){delete struct[k];if(featureAt.get(k)?.built)featureAt.delete(k);log(name+'が壊れた','kill');}
+}
+function attackStruct(a,p){
+  if(state.phase!=='battle'||state.winner||a.side!==state.side||!canHitStruct(a,p))return;
+  pushHistory();
+  const k=key(p.q,p.r),t=structType(p),name=structName(p),dmg=structDamage(a),s=struct[k];
+  a.attacked=true;a.mp=0;
+  if(a.hidden&&!(a.type==='archer'&&dist(a,p)>=2))reveal(a,name+'を攻撃して姿を現した');
+  s.hp-=dmg;
+  log(uname(a)+' → '+name+'：'+dmg+'の損傷'+(s.hp>0?'（残り'+s.hp+'／'+maxOf(t)+'）':''));
+  if(s.hp<=0){delete struct[k];if(featureAt.get(k)?.built)featureAt.delete(k);log(name+'が壊れた','kill');}
+  // こもっている部隊は、攻撃側を正面に捉えていて届けば反撃する
+  const g=unitAt(p.q,p.r);
+  if(g&&g.side!==a.side&&!g.hidden&&!g.worked){
+    const c=computeCounter(a,g,0);
+    if(c){const am=menOf(a);a.hp-=c.dmg;log('　反撃 '+uname(g)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');if(a.hp<=0)removeUnitDead(a);checkWinner();}
+  }
+  render();
+}
+// 槍兵の工事：動く前なら、柵は向いている方向の隣のマス、陣地は今いるマスに、兵数に応じた耐久を積む（行動は終わる）
+// 作りかけ・壊れかけの柵や陣地にも続けて積める（修理）。砦は新しく築けないが、立っている砦のマスは修理できる。10人で1、100人で10（buildRate＝0.1）
+const workRate=u=>Math.floor(menOf(u)*cfg.buildRate+1e-9); // 小数点以下は切り捨て
+function workSpot(u,type){const p=type==='fence'?{q:u.q+DIRS[u.f][0],r:u.r+DIRS[u.f][1]}:{q:u.q,r:u.r};return cells.has(key(p.q,p.r))?p:null;}
+// 実際に工事する種類（陣地のボタンでも、砦のマスなら砦の修理）
+const workType=(p,type)=>{const f=featOf(p);return f&&type==='jinchi'&&f.type==='fort'?'fort':type;};
+function canWork(u,type){
+  if(state.phase!=='battle'||state.winner||u.side!==state.side||u.type!=='spear'||u.attacked||u.pending||u.mp<cfg.units.spear.mp||inContact(u)||workRate(u)<1)return false;
+  const p=workSpot(u,type);if(!p)return false;
+  const f=featOf(p),t=workType(p,type);if(f&&f.type!==t)return false;
+  if(t==='fort'&&!struct[key(p.q,p.r)])return false; // 壊れた砦は建て直せない
+  if(['mountain','river'].includes(terOf(p))||(type==='fence'&&unitAt(p.q,p.r)))return false;
+  const s=struct[key(p.q,p.r)];return !s||s.hp<maxOf(t);
+}
+function work(u,type){
+  if(!canWork(u,type))return;
+  pushHistory();
+  const p=workSpot(u,type),k=key(p.q,p.r);type=workType(p,type);const max=maxOf(type);
+  if(!featureAt.get(k))featureAt.set(k,{type,built:true,side:u.side}); // 作った軍のもの（自軍では壊せない）
+  const name=structName(p);
+  const s=struct[k]||(struct[k]={hp:0,done:false}),repair=s.done;
+  s.hp=Math.min(max,s.hp+workRate(u));
+  u.mp=0;u.attacked=true;u.worked=true;
+  if(u.hidden)reveal(u,'工事をして姿を現した');
+  if(s.hp>=max&&!s.done){s.done=true;log(uname(u)+'の'+name+'が完成','kill');}
+  else log(uname(u)+'が'+name+'を'+(repair?'修理':'工事')+'（'+s.hp+'／'+max+'）','sys');
+  render();
+}
 function removeUnitDead(u){state.units=state.units.filter(x=>x!==u);log(uname(u)+'が壊滅','kill');}
 function checkWinner(){['blue','red'].forEach(s=>{if(!state.winner&&!state.units.some(u=>u.side===s)){state.winner=s==='blue'?'red':'blue';log(SIDE_NAME[state.winner]+'の勝利','kill');}});}
 // 隠れた部隊からの攻撃。反撃は受けない。奇襲なら倍率がかかり、相手の隊列が乱れる。
 // 弓兵が2マス以上離れて射た場合は隠れたままで、相手には矢の来た方向だけが分かる
 function hiddenStrike(a,t,amb){
   const res=computeAttack(a,t,amb),tm=menOf(t);
-  t.hp-=res.dmg;if(amb)t.dis=true;
+  t.hp-=res.dmg;if(amb)t.dis=true;spillStruct(a,t);
   const lost=tm-menOf(t),rest='残り'+Math.max(0,menOf(t))+'人',fx=amb?'（反撃なし・隊列乱れ）':'（反撃なし）';
   if(a.type==='archer'&&dist(a,t)>=2){
     a.sprung=true;t.shotFrom=dirTo(t,a);
@@ -290,11 +385,12 @@ function doAttack(a,t){
   pushHistory();
   if(a.hidden){a.attacked=true;a.mp=0;hiddenStrike(a,t,!a.sprung);state.history=[];render();return;}
   const res=computeAttack(a,t);
-  const tm=menOf(t);t.hp-=res.dmg;a.attacked=true;a.mp=0;
-  log(uname(a)+' → '+uname(t)+'：'+res.notes.join('、')+'、'+(tm-menOf(t))+'人減、残り'+menOf(t)+'人');
+  const tm=menOf(t),wk=t.worked;t.hp-=res.dmg;a.attacked=true;a.mp=0;if(wk)t.dis=true; // 工事中を襲われると隊列も乱れる
+  log(uname(a)+' → '+uname(t)+'：'+res.notes.join('、')+'、'+(tm-menOf(t))+'人減、残り'+menOf(t)+'人'+(wk?'（反撃なし・隊列乱れ）':''));
+  spillStruct(a,t);
   if(t.hp<=0){state.units=state.units.filter(u=>u!==t);log(uname(t)+'が壊滅','kill');}
   else{
-    const c=computeCounter(a,t,0);
+    const c=t.worked?null:computeCounter(a,t,0); // 工事中の部隊は反撃できない
     if(c){
       const am=menOf(a);a.hp-=c.dmg;
       log('　反撃 '+uname(t)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');
@@ -320,8 +416,8 @@ function endTurn(){
   });
   state.side=state.side==='blue'?'red':'blue';
   if(state.side==='blue')state.turn++;
-  startSide(state.side);state.selected=null;state.history=[];
-  log('第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番','sys');render();
+  state.selected=null;state.history=[];
+  log('第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番','sys');startSide(state.side);render(); // 回復は手番の見出しのあとに記録
   if(state.side==='red'&&aiRed)setTimeout(runAI,350);
 }
 
@@ -359,7 +455,7 @@ function evalState(u,s,enemies){
   const V={q:s.q,r:s.r,f:s.f,type:u.type,hp:u.hp,dis:s.dis,side:u.side,attacked:false};
   const pct=(n,x)=>n*100/maxHp(x);
   let atkVal=0,target=null,kills=false;
-  enemies.forEach(t=>{if(canAttack(V,t)){const r=computeAttack(V,t),k=r.dmg>=t.hp,c=k?null:computeCounter(V,t,r.dmg);
+  enemies.forEach(t=>{if(canAttack(V,t)){const r=computeAttack(V,t),k=r.dmg>=t.hp,c=k||t.worked?null:computeCounter(V,t,r.dmg);
     let v=pct(Math.min(r.dmg,t.hp),t)+(k?35:0);if(c)v-=pct(Math.min(c.dmg,u.hp),u)+(c.dmg>=u.hp?35:0);if(v>atkVal){atkVal=v;target=t;kills=k;}}});
   let threat=0;
   enemies.forEach(e=>{
@@ -372,6 +468,8 @@ function evalState(u,s,enemies){
   });
   const near=nearestDist(V,enemies);
   let pos=u.type==='archer'?-Math.abs(near-3)*3-(near===1?10:0):-near*3;
+  const hq=honjinOf(u.side==='red'?'blue':'red');
+  if(hq){if(V.q===hq.q&&V.r===hq.r)pos+=1000;else if(u.type!=='archer')pos-=dist(V,hq)*1.5;} // 敵の本陣を目指す
   return {score:atkVal-threat+pos,target};
 }
 function aiWantsAmbush(h,m){
@@ -398,8 +496,13 @@ async function runAI(){
     for(const a of plan.acts){if(g!==gen||!state.units.includes(u)||state.winner)break;if(a.t==='move')await tryMove(u,a.d);else tryTurn(u,a.dl);await sleep(140);}
     if(g!==gen)break;
     if(!state.units.includes(u))continue;
+    if(state.winner)break;
     if(plan.target&&state.units.includes(plan.target)&&canAttack(u,plan.target)){doAttack(u,plan.target);await sleep(380);}
-    else if(aiShouldHide(u,enemies()))hideUnit(u);
+    else{
+      const f=[...cells.values()].find(c=>canHitStruct(u,c)&&fenceAt(c)&&cfg.fenceVs[u.type]>=1); // 行く手の柵は、壊しやすい兵種で壊す
+      if(f){attackStruct(u,f);await sleep(380);}
+      else if(aiShouldHide(u,enemies()))hideUnit(u);
+    }
   }
   if(g!==gen)return;
   busy=false;state.selected=null;
@@ -408,30 +511,32 @@ async function runAI(){
 function undo(){
   if(busy||state.prompt)return;
   const s=state.history.pop();if(!s)return;
-  const o=JSON.parse(s);state.units=o.units;state.log.length=o.logLen;state.winner=o.winner;
+  const o=JSON.parse(s);state.units=o.units;struct=o.struct||{};state.log.length=o.logLen;state.winner=o.winner;
+  featureAt.forEach((f,k)=>{if(f.built&&!(k in struct))featureAt.delete(k);}); // 取り消した工事
   if(state.selected!=null&&!byId(state.selected))state.selected=null;render();
 }
 
 /* ---- render ---- */
 const svg=document.getElementById('board');
-svg.setAttribute('viewBox',VB.join(' '));
 function render(){
+  svg.setAttribute('viewBox',VB.join(' ')); // 盤の大きさはマップごと
   const v=viewer();
   let sel=state.selected!=null?byId(state.selected):null;
   if(sel&&!seen(sel,v))sel=null;
   const mine=sel&&sel.side===state.side&&!state.winner&&state.phase==='battle'&&!state.prompt;
-  const moves=new Map(),targets=new Map();
+  const moves=new Map(),targets=new Map(),structTargets=new Map();
   if(mine&&!sel.attacked&&!sel.pending){
     for(let d=0;d<6;d++){const nq=sel.q+DIRS[d][0],nr=sel.r+DIRS[d][1],k=key(nq,nr);
       if(cells.has(k)&&!seenAt(nq,nr)){const c=stepCost(sel,d);if(sel.mp>=c)moves.set(k,{d,c});}}
-    state.units.forEach(t=>{if(canAttack(sel,t)&&seen(t,v)){const r=computeAttack(sel,t,surprise(sel)),c=(r.dmg>=t.hp||sel.hidden)?null:computeCounter(sel,t,r.dmg);targets.set(key(t.q,t.r),{...r,loss:lossOf(t,r.dmg),closs:c?lossOf(sel,c.dmg):0});}});
+    cells.forEach((c,k)=>{if(canHitStruct(sel,c))structTargets.set(k,structName(c)+' −'+structDamage(sel));});
+    state.units.forEach(t=>{if(canAttack(sel,t)&&seen(t,v)){const r=computeAttack(sel,t,surprise(sel)),c=(r.dmg>=t.hp||sel.hidden||t.worked)?null:computeCounter(sel,t,r.dmg);targets.set(key(t.q,t.r),{...r,loss:lossOf(t,r.dmg),closs:c?lossOf(sel,c.dmg):0});}});
   }
-  let h=boardSVG()+'<g>';
+  let h=boardSVG({hp:struct,max:{fence:cfg.fenceHp,jinchi:cfg.jinchiHp,fort:cfg.fortHp}})+'<g>';
   cells.forEach((c,k)=>{
     let cls='cell';
     if(state.phase==='setup'&&sel&&deployable(sel)&&inZone(sel.side,c.q,c.r)&&!unitAt(c.q,c.r)&&!cavBlocked(sel.type,c))cls+=' move';
     else if(moves.has(k))cls+=' move';
-    else if(targets.has(k))cls+=' target';
+    else if(targets.has(k)||structTargets.has(k))cls+=' target';
     else if(sel){const U=cfg.units[sel.type],d=dist(sel,c);if(d>=U.rmin&&d<=U.rmax&&relAngle(sel,c)<=90+EPS)cls+=' arc-'+sel.side;
       else if(showZoc&&!seenAt(c.q,c.r)&&inZoc(c.q,c.r,state.side))cls+=' zoc';}
     else if(showZoc&&!seenAt(c.q,c.r)&&inZoc(c.q,c.r,state.side))cls+=' zoc';
@@ -464,6 +569,7 @@ function render(){
     h+='</g>';
   });
   h+='</g><g>';
+  structTargets.forEach((t,k)=>{const c=cells.get(k);h+='<text class="lbl dmg" x="'+c.x+'" y="'+(c.y+(targets.has(k)?S*K*0.78:-S*K*0.78)).toFixed(1)+'">'+t+'</text>';});
   targets.forEach((r,k)=>{const c=cells.get(k);h+='<text class="lbl dmg" x="'+c.x+'" y="'+(c.y-S*K*0.78).toFixed(1)+'">−'+r.loss+'人'+(r.dm!==1?' ×'+r.dm:'')+(r.closs?' 反−'+r.closs+'人':'')+'</text>';});
   h+='</g>';
   svg.innerHTML=h;
@@ -476,6 +582,18 @@ function terLabel(p){
   if(COVER.has(t))fx.push('隠れられる');
   return TER_NAME[t]+(fx.length?'（'+fx.join('、')+'）':'');
 }
+function featLabel(p){
+  const f=featOf(p);if(!f)return '';
+  const pc=x=>Math.round(x*100)+'%';
+  if(f.type==='honjin')return SIDE_NAME[f.side]+'の本陣（'+SIDE_NAME[f.side]+'の防御×'+cfg.honjinDef+'、手番ごとに'+pc(cfg.honjinHeal)+'回復、敵が入ると'+SIDE_NAME[f.side]+'の負け）';
+  if(STRUCTS.includes(f.type)){
+    const t=structType(p),s=struct[key(p.q,p.r)],name=structName(p);if(!t)return '壊れた'+name;
+    const eff=fmt(1+(fullDef(p)-1)*ratioOf(p)),hp=s.hp+'／'+maxOf(t);
+    return name+'（'+(s.done?'耐久'+hp:'工事中 '+hp)+'、防御×'+eff+(t==='fence'?(s.done?'、騎兵は入れず攻撃もできない':'、完成するまで騎兵は止められない'):'、入るのに+'+cfg.fortMove)+'）';
+  }
+  if(f.type==='village')return '村（防御×'+cfg.villageDef+'、隠れられる、手番ごとに'+pc(cfg.villageHeal)+'回復）';
+  return '';
+}
 function renderPanel(sel,mine,v){
   const tb=document.getElementById('turnBox'),ub=document.getElementById('unitBox');
   if(state.phase==='setup'){
@@ -486,7 +604,7 @@ function renderPanel(sel,mine,v){
     let h='<dl style="margin-top:0">'+sum('blue')+sum('red')+'</dl>';
     if(sel){
       const U=cfg.units[sel.type],ok=deployable(sel);
-      h+='<div class="uname" style="margin-top:.6rem">'+uname(sel)+'</div><dl><dt>兵数</dt><dd>'+sel.men0+'人</dd><dt>地形</dt><dd>'+terLabel(sel)+'</dd></dl>'+
+      h+='<div class="uname" style="margin-top:.6rem">'+uname(sel)+'</div><dl><dt>兵数</dt><dd>'+sel.men0+'人</dd><dt>地形</dt><dd>'+terLabel(sel)+'</dd>'+(featLabel(sel)?'<dt>拠点</dt><dd>'+featLabel(sel)+'</dd>':'')+'</dl>'+
         (ok?'<div class="row"><button class="ghost" id="bSL">↺ 左へ</button><button class="ghost" id="bSR">↻ 右へ</button></div>'
            :'<p class="hint" style="margin-top:.4rem">赤軍はAIに任せているので、マップのとおりに配置されます。</p>');
     }else h+='<p class="hint" style="margin-top:.4rem">部隊を選んでください。</p>';
@@ -523,21 +641,39 @@ function renderPanel(sel,mine,v){
       '<div class="row"><button class="ghost" id="bEdit"'+(busy?' disabled':'')+'>配置からやり直す</button><button class="ghost" id="bMaps2">マップ編集</button><button class="ghost" id="bCfg">数値調整</button></div>'+
       '<div class="row"><label class="chk"><input type="checkbox" id="cAi"'+(aiRed?' checked':'')+'> 赤軍をAIに任せる</label><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label></div>';
   }
-  if(!sel){ub.innerHTML='<p class="hint">ユニットを選んでください。敵ユニットも選ぶと状態を確認できます。</p>';}
+  const ch=state.choice&&sel&&mine?state.choice:null,cu=ch&&seenAt(ch.q,ch.r);
+  if(ch&&cu&&canAttack(sel,cu)&&canHitStruct(sel,ch)){
+    const r=computeAttack(sel,cu,surprise(sel)),nm=structName(ch);
+    ub.innerHTML='<div class="uname">攻撃の対象</div><p class="hint" style="margin-top:.3rem">'+uname(cu)+'は'+nm+'にこもっています。どちらを攻撃しますか？</p>'+
+      '<div class="row"><button id="bChU">'+uname(cu)+'を攻撃（−'+lossOf(cu,r.dmg)+'人・'+nm+' −'+spillDamage(sel)+'）</button><button id="bChS">'+nm+'を攻撃（'+nm+' −'+structDamage(sel)+'）</button><button class="ghost" id="bChX">やめる（Esc）</button></div>'+
+      '<p class="hint" style="margin-top:.4rem">部隊を攻撃しても'+nm+'に少し損傷が入ります。'+nm+'を攻撃すると大きく壊せますが、中の部隊が正面に捉えていれば反撃を受けます。</p>';
+    const go=f=>()=>{state.choice=null;f();};
+    document.getElementById('bChU').onclick=go(()=>doAttack(sel,cu));
+    document.getElementById('bChS').onclick=go(()=>attackStruct(sel,ch));
+    document.getElementById('bChX').onclick=go(render);
+  }
+  else if(!sel){ub.innerHTML='<p class="hint">ユニットを選んでください。敵ユニットも選ぶと状態を確認できます。</p>';}
   else{
     const U=cfg.units[sel.type],contact=inContact(sel),tc=contact?cfg.contactTurnCost:cfg.turnCost;
     const canT=mine&&sel.mp>=tc;
-    const st=[];if(sel.hidden&&(sel.side===v||v==null))st.push(sel.sprung?'隠蔽中（奇襲は済み）':'隠蔽中');if(sel.pending)st.push('隠蔽の準備中（手番の終わりに隠れる）');
+    const st=[];if(sel.hidden&&(sel.side===v||v==null))st.push(sel.sprung?'隠蔽中（奇襲は済み）':'隠蔽中');if(sel.pending)st.push('隠蔽の準備中（手番の終わりに隠れる）');if(sel.worked)st.push('工事中（次の手番まで無防備）');
     if(sel.shotFrom!=null)st.push(DIR_NAME[sel.shotFrom]+'の方向から矢を受けた');if(contact)st.push('接触中');if(sel.dis)st.push('隊列乱れ（攻防×'+cfg.disorder+'）');if(sel.attacked)st.push('攻撃済み');
     ub.innerHTML='<div class="uname">'+uname(sel)+'</div><dl>'+
       '<dt>兵数</dt><dd>'+menOf(sel)+' / '+sel.men0+'人</dd>'+
       '<dt>移動力</dt><dd>'+(sel.side===state.side?sel.mp:U.mp)+' / '+U.mp+'</dd>'+
       '<dt>攻撃／防御（1人）</dt><dd>'+U.atk+' / '+U.def+'</dd>'+
       '<dt>射程</dt><dd>'+(U.rmin===U.rmax?U.rmin:U.rmin+'〜'+U.rmax)+'</dd>'+
-      '<dt>地形</dt><dd>'+terLabel(sel)+'</dd>'+
+      '<dt>地形</dt><dd>'+terLabel(sel)+'</dd>'+(featLabel(sel)?'<dt>拠点</dt><dd>'+featLabel(sel)+'</dd>':'')+
       '<dt>状態</dt><dd>'+(st.join('、')||'通常')+'</dd></dl>'+
       (mine&&!busy?'<div class="row"><button id="bL"'+(canT?'':' disabled')+'>左に旋回（'+tc+'）</button><button id="bR"'+(canT?'':' disabled')+'>右に旋回（'+tc+'）</button></div>'+
         (contact&&!sel.dis?'<p class="hint" style="margin-top:.4rem">接触中に旋回すると隊列が乱れます。</p>':'')+
+        (sel.type==='spear'?(()=>{
+          const jp=workSpot(sel,'jinchi'),jt=jp?workType(jp,'jinchi'):'jinchi';
+          const prog=(t,p)=>{const x=p&&struct[key(p.q,p.r)];return x&&featOf(p)?.type===t?' '+x.hp+'／'+maxOf(t):'';},r='+'+workRate(sel);
+          return '<div class="row"><button id="bFence"'+(canWork(sel,'fence')?'':' disabled')+'>'+DIR_NAME[sel.f]+'に柵'+prog('fence',workSpot(sel,'fence'))+'（'+r+'・B）</button>'+
+            '<button id="bFort"'+(canWork(sel,'jinchi')?'':' disabled')+'>'+(jt==='fort'?'砦を修理':'ここに陣地')+prog(jt,jp)+'（'+r+'・F）</button></div>'+
+            '<p class="hint" style="margin-top:.4rem">動く前なら、兵数に応じて工事を進められます（1人あたり'+cfg.buildRate+'、この部隊は'+r+'。小数点以下は切り捨て）。柵は向いている方向の隣のマス、陣地は今いるマスで、どちらも平地・森・丘のみ。砦のマスにいれば砦を修理できます。作りかけでも、たまった耐久の割合だけ防御が上がります。工事をするとこの部隊の行動は終わり、次の手番まで無防備になります（攻撃されると奇襲の倍率を受け、反撃できず、隊列が乱れる）。</p>';
+        })():'')+
         (sel.hidden?'<div class="row"><span class="hint">行軍（M）</span><button id="bMH" class="'+(state.march==='normal'?'ghost':'on')+'">隠蔽行軍（+'+cfg.hideMove+'/マス）</button><button id="bMN" class="'+(state.march==='normal'?'on':'ghost')+'">通常行軍</button></div>'+
           '<p class="hint" style="margin-top:.4rem">'+(state.march==='normal'?'通常行軍で動くと姿を現します。':'森・丘・山の中なら隠れたまま動けます。')+
           (sel.sprung?'奇襲は済んでいます。もう一度「隠蔽」すると、次の攻撃が再び奇襲になります。':'攻撃すると奇襲になります'+(sel.type==='archer'?'（2マス以上離れて射れば隠れたまま）':'')+'。')+'</p>':'')+
@@ -546,7 +682,7 @@ function renderPanel(sel,mine,v){
   const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
   on('bEnd',endTurn);on('bUndo',undo);on('bNew',()=>newGame(false));on('bEdit',editFormation);on('bCfg',openSettings);on('bMaps2',openMaps);
   on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));
-  on('bHide',()=>hideUnit(sel));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
+  on('bHide',()=>hideUnit(sel));on('bFence',()=>work(sel,'fence'));on('bFort',()=>work(sel,'jinchi'));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
   const ai=document.getElementById('cAi');if(ai)ai.onchange=()=>{aiRed=ai.checked;if(aiRed&&state.side==='red'&&state.phase==='battle')runAI();};
   const z=document.getElementById('cZoc');if(z)z.onchange=()=>{showZoc=z.checked;render();};
   renderLog(v);
@@ -562,7 +698,12 @@ svg.addEventListener('click',e=>{
   const [q,r]=el.dataset.key.split(',').map(Number);
   const sel=state.selected!=null?byId(state.selected):null;
   const u=seenAt(q,r);
-  if(sel&&sel.side===state.side&&u&&u.side!==sel.side&&canAttack(sel,u)){doAttack(sel,u);return;}
+  const canU=sel&&sel.side===state.side&&u&&u.side!==sel.side&&canAttack(sel,u);
+  const canS=state.phase==='battle'&&sel&&sel.side===state.side&&canHitStruct(sel,{q,r});
+  state.choice=null;
+  if(canU&&canS){state.choice={q,r};render();return;} // 部隊を攻撃するか、拠点を攻撃するか
+  if(canU){doAttack(sel,u);return;}
+  if(canS){attackStruct(sel,{q,r});return;}
   if(state.phase==='setup'){
     if(u)state.selected=u.id;else if(sel&&inZone(sel.side,q,r)){placeSetup(sel,q,r);return;}else state.selected=null;
     render();return;
@@ -581,9 +722,11 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='e'||e.key==='E')turn(1);
   else if(e.key==='z'||e.key==='Z'){undo();}
   else if((e.key==='h'||e.key==='H')&&sel&&state.phase==='battle')hideUnit(sel);
+  else if((e.key==='b'||e.key==='B')&&sel)work(sel,'fence');
+  else if((e.key==='f'||e.key==='F')&&sel)work(sel,'jinchi');
   else if((e.key==='m'||e.key==='M')&&sel&&sel.hidden){state.march=state.march==='normal'?'hidden':'normal';render();}
   else if(e.key==='Enter'){endTurn();}
-  else if(e.key==='Escape'){state.selected=null;render();}
+  else if(e.key==='Escape'){if(state.choice)state.choice=null;else state.selected=null;render();}
 });
 
 /* ---- 数値調整タブから届いた値を反映 ---- */

@@ -17,26 +17,26 @@ main{max-width:1200px;margin:0 auto;padding:1rem 1.25rem 2rem;display:flex;flex-
 input.chg{border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue)}
 textarea{width:100%;min-height:9rem;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;background:var(--map);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:.5rem}
 .wide{grid-column:1/-1}
-th{white-space:nowrap}
+#unitTbl th,#matTbl th,#terTbl th{white-space:nowrap}
+.grp th{font-weight:500;color:var(--ink);white-space:normal}.grp td{width:5rem;text-align:right}.grp table{width:100%}
 .legend{display:inline-block;width:.9rem;height:.9rem;border:1px solid var(--blue);box-shadow:inset 0 0 0 1px var(--blue);border-radius:3px;vertical-align:-2px;margin-right:.2rem}
 </style>
 </head>
 <body>
 <header>
   <h1>数値調整</h1>
-  <p>値を変えて「ゲームに反映」を押すと、開いているゲーム画面にすぐ反映されます。<span class="legend"></span>は既定値から変えた欄です。</p>
+  <p>値を変えて「ゲームに反映」を押すと、開いているゲーム画面にすぐ反映されます。<span class="legend"></span>は初期設定から変えた欄です。</p>
 </header>
 <div class="bar"><div class="bar-in">
   <button id="bApply">ゲームに反映</button>
-  <button class="ghost" id="bRevert">反映前に戻す</button>
-  <button class="ghost" id="bDefault">既定値に戻す</button>
+  <button class="ghost" id="bRevert" title="まだ反映していない入力を取り消し、最後にゲームへ反映した値に戻します">入力を取り消す</button>
+  <button class="ghost" id="bDefault" title="ゲームにもともと入っている数値を入力欄に入れます。「ゲームに反映」で確定します">初期設定に戻す</button>
   <button class="ghost" id="bExport">書き出し</button>
   <span class="status" id="status" role="status"></span>
 </div></div>
 <main>
   <div class="set-grid">
     <div class="box wide"><h2>兵種</h2><div class="tbl-wrap"><table id="unitTbl"></table></div></div>
-    <div class="box"><h2>倍率とコスト</h2><div class="tbl-wrap"><table id="multTbl"></table></div></div>
     <div class="box">
       <h2>兵種相性（攻撃側 → 防御側）</h2>
       <div class="tbl-wrap"><table id="matTbl"></table></div>
@@ -48,15 +48,25 @@ th{white-space:nowrap}
       <p class="hint" style="margin-top:.5rem">移動の追加コストは、そのマスに入るときに方向別のコストへ加算されます。攻撃・防御の倍率は、そのマスにいる部隊に掛かります。騎兵は山に入れません。</p>
     </div>
   </div>
+  <div class="set-grid" id="groups"></div>
   <div class="box" id="exportBox" hidden>
-    <h2>書き出し（既定値から変えた値）</h2>
-    <p class="hint">この内容をコピーして Claude に渡すと、ゲームの既定値として組み込めます。</p>
+    <h2>書き出し（初期設定から変えた値）</h2>
+    <p class="hint">この内容をコピーして Claude に渡すと、ゲームの初期設定として組み込めます。</p>
     <textarea id="exportText" readonly></textarea>
     <div class="row"><button id="bCopy">コピー</button></div>
   </div>
 </main>
 <script src="hex-config.js"></script>
 <script>
+const GROUPS=[
+  ['戦闘',['base','side','rear','disorder','counter','spearFrontDef','cavForest']],
+  ['移動と旋回',['mvF','mvFD','mvRD','mvR','turnCost','contactTurnCost']],
+  ['伏兵',['ambush','hideCost','hideMove']],
+  ['本陣・村',['honjinDef','honjinHeal','villageDef','villageHeal'],'回復は、敵と接していないとき自軍の手番のはじめに、最初の兵数に対する割合で行われます。'],
+  ['陣地・砦',['jinchiDef','jinchiHp','fortCoreDef','fortRingDef','fortHp','fortMove'],'防御倍率は、耐久の割合に応じて効きます（作りかけ・壊れかけは弱い）。二乗則では、防御 ×D を落とすのに √D 倍の兵力が要ります。'],
+  ['柵',['fenceDef','fenceMove','fenceHp']],
+  ['工事と破壊',['buildRate','demolishRate','fenceVs.spear','fenceVs.cav','fenceVs.archer','structSpill'],'工事も破壊も、兵数 × 1人あたりの量で、小数点以下は切り捨てです。'],
+];
 let saved=loadCfg(); // 最後にゲームへ反映した値
 let cfg=clone(saved);
 const getP=(o,p)=>p.split('.').reduce((x,k)=>x[k],o);
@@ -67,7 +77,13 @@ function build(){
   let h='<tr><th></th><th>初期兵数</th><th>HP（1人）</th><th>攻撃</th><th>防御</th><th>移動力</th><th>最小射程</th><th>最大射程</th></tr>';
   TYPES.forEach(t=>{h+='<tr><th>'+cfg.units[t].name+'</th>'+['men','hp','atk','def','mp','rmin','rmax'].map(f=>'<td>'+inp('units.'+t+'.'+f,1)+'</td>').join('')+'</tr>';});
   document.getElementById('unitTbl').innerHTML=h;
-  document.getElementById('multTbl').innerHTML=MULT_FIELDS.map(([k,l])=>'<tr><th>'+l+'</th><td>'+inp(k,0.05)+'</td></tr>').join('');
+  // 倍率とコストは内容ごとの表に分ける（どこにも入らない項目は「その他」へ）
+  const label=Object.fromEntries(MULT_FIELDS),used=new Set();
+  const table=(title,keys,hint)=>{keys=keys.filter(k=>k in label);keys.forEach(k=>used.add(k));
+    return '<div class="box grp"><h2>'+title+'</h2><table>'+keys.map(k=>'<tr><th>'+label[k]+'</th><td>'+inp(k,0.05)+'</td></tr>').join('')+'</table>'+(hint?'<p class="hint" style="margin-top:.5rem">'+hint+'</p>':'')+'</div>';};
+  let g=GROUPS.map(([t,ks,hint])=>table(t,ks,hint)).join('');
+  const rest=MULT_FIELDS.map(([k])=>k).filter(k=>!used.has(k));if(rest.length)g+=table('その他',rest);
+  document.getElementById('groups').innerHTML=g;
   h='<tr><th></th>'+TYPES.map(t=>'<th>'+cfg.units[t].name+'</th>').join('')+'</tr>';
   TYPES.forEach(a=>{h+='<tr><th>'+cfg.units[a].name+'</th>'+TYPES.map(d=>'<td>'+inp('matrix.'+a+'.'+d,0.05)+'</td>').join('')+'</tr>';});
   document.getElementById('matTbl').innerHTML=h;
@@ -92,7 +108,7 @@ function refresh(){
 }
 function setMsg(t){const st=document.getElementById('status');st.dataset.msg=t;refresh();}
 
-// 既定値から変わった値だけを取り出す
+// 初期設定から変わった値だけを取り出す
 function diff(o,d){
   const out={};
   for(const k in o){
@@ -110,11 +126,11 @@ document.getElementById('bApply').onclick=()=>{
   const t=new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   setMsg(t+' に反映しました'+(g?'':'（ゲーム画面を開き直したときにも反映されます）'));
 };
-document.getElementById('bRevert').onclick=()=>{cfg=clone(saved);build();setMsg('反映前の値に戻しました');};
-document.getElementById('bDefault').onclick=()=>{cfg=clone(DEFAULTS);build();setMsg('既定値を入れました。「ゲームに反映」で確定します');};
+document.getElementById('bRevert').onclick=()=>{cfg=clone(saved);build();setMsg('入力を取り消し、最後に反映した値に戻しました');};
+document.getElementById('bDefault').onclick=()=>{cfg=clone(DEFAULTS);build();setMsg('初期設定の値を入れました。「ゲームに反映」を押すと確定します');};
 document.getElementById('bExport').onclick=()=>{
   const d=diff(readInputs(),DEFAULTS);
-  document.getElementById('exportText').value=Object.keys(d).length?JSON.stringify(d,null,2):'（既定値から変えた値はありません）';
+  document.getElementById('exportText').value=Object.keys(d).length?JSON.stringify(d,null,2):'（初期設定から変えた値はありません）';
   const box=document.getElementById('exportBox');box.hidden=false;box.scrollIntoView({behavior:'smooth',block:'start'});
 };
 document.getElementById('bCopy').onclick=async()=>{
