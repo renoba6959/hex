@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>数値調整（向きの兵棋盤）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="hex-common.css">
+<style>
+.bar{position:sticky;top:0;z-index:2;background:var(--paper);border-bottom:1px solid var(--line)}
+.bar-in{max-width:1200px;margin:0 auto;padding:.6rem 1.25rem;display:flex;flex-wrap:wrap;gap:.45rem;align-items:center}
+.status{font-size:.85rem;color:var(--muted);margin-left:.4rem}
+.status.dirty{color:var(--red);font-weight:700}
+main{max-width:1200px;margin:0 auto;padding:1rem 1.25rem 2rem;display:flex;flex-direction:column;gap:1rem}
+input.chg{border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue)}
+textarea{width:100%;min-height:9rem;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;background:var(--map);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:.5rem}
+.wide{grid-column:1/-1}
+th{white-space:nowrap}
+.legend{display:inline-block;width:.9rem;height:.9rem;border:1px solid var(--blue);box-shadow:inset 0 0 0 1px var(--blue);border-radius:3px;vertical-align:-2px;margin-right:.2rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>数値調整</h1>
+  <p>値を変えて「ゲームに反映」を押すと、開いているゲーム画面にすぐ反映されます。<span class="legend"></span>は既定値から変えた欄です。</p>
+</header>
+<div class="bar"><div class="bar-in">
+  <button id="bApply">ゲームに反映</button>
+  <button class="ghost" id="bRevert">反映前に戻す</button>
+  <button class="ghost" id="bDefault">既定値に戻す</button>
+  <button class="ghost" id="bExport">書き出し</button>
+  <span class="status" id="status" role="status"></span>
+</div></div>
+<main>
+  <div class="set-grid">
+    <div class="box wide"><h2>兵種</h2><div class="tbl-wrap"><table id="unitTbl"></table></div></div>
+    <div class="box"><h2>倍率とコスト</h2><div class="tbl-wrap"><table id="multTbl"></table></div></div>
+    <div class="box">
+      <h2>兵種相性（攻撃側 → 防御側）</h2>
+      <div class="tbl-wrap"><table id="matTbl"></table></div>
+      <p class="hint" style="margin-top:.5rem">ダメージ ＝ 殺傷係数 × 攻撃側の兵数 × 攻撃力 × 方向倍率 × 相性 × 攻撃側の地形 ×（奇襲なら奇襲の倍率）÷（防御力 × 防御側の地形）。部隊HP ＝ 兵数 × 1人あたりHP。隊列乱れは攻防それぞれに掛かります。反撃は攻撃を受けた後の兵数で同じ式を使い、反撃の倍率を掛けます。</p>
+    </div>
+    <div class="box">
+      <h2>地形</h2>
+      <div class="tbl-wrap"><table id="terTbl"></table></div>
+      <p class="hint" style="margin-top:.5rem">移動の追加コストは、そのマスに入るときに方向別のコストへ加算されます。攻撃・防御の倍率は、そのマスにいる部隊に掛かります。騎兵は山に入れません。</p>
+    </div>
+  </div>
+  <div class="box" id="exportBox" hidden>
+    <h2>書き出し（既定値から変えた値）</h2>
+    <p class="hint">この内容をコピーして Claude に渡すと、ゲームの既定値として組み込めます。</p>
+    <textarea id="exportText" readonly></textarea>
+    <div class="row"><button id="bCopy">コピー</button></div>
+  </div>
+</main>
+<script src="hex-config.js"></script>
+<script>
+let saved=loadCfg(); // 最後にゲームへ反映した値
+let cfg=clone(saved);
+const getP=(o,p)=>p.split('.').reduce((x,k)=>x[k],o);
+const setP=(o,p,v)=>{const ks=p.split('.'),last=ks.pop();ks.reduce((x,k)=>x[k],o)[last]=v;};
+const inp=(p,step)=>'<input type="number" step="'+step+'" data-path="'+p+'" value="'+getP(cfg,p)+'" aria-label="'+p+'">';
+
+function build(){
+  let h='<tr><th></th><th>初期兵数</th><th>HP（1人）</th><th>攻撃</th><th>防御</th><th>移動力</th><th>最小射程</th><th>最大射程</th></tr>';
+  TYPES.forEach(t=>{h+='<tr><th>'+cfg.units[t].name+'</th>'+['men','hp','atk','def','mp','rmin','rmax'].map(f=>'<td>'+inp('units.'+t+'.'+f,1)+'</td>').join('')+'</tr>';});
+  document.getElementById('unitTbl').innerHTML=h;
+  document.getElementById('multTbl').innerHTML=MULT_FIELDS.map(([k,l])=>'<tr><th>'+l+'</th><td>'+inp(k,0.05)+'</td></tr>').join('');
+  h='<tr><th></th>'+TYPES.map(t=>'<th>'+cfg.units[t].name+'</th>').join('')+'</tr>';
+  TYPES.forEach(a=>{h+='<tr><th>'+cfg.units[a].name+'</th>'+TYPES.map(d=>'<td>'+inp('matrix.'+a+'.'+d,0.05)+'</td>').join('')+'</tr>';});
+  document.getElementById('matTbl').innerHTML=h;
+  document.getElementById('terTbl').innerHTML='<tr><th></th><th>移動の追加コスト</th><th>防御倍率</th><th>攻撃倍率</th></tr>'+
+    TER_TYPES.map(t=>'<tr><th>'+TER_NAME[t]+'</th>'+['move','def','atk'].map(f=>'<td>'+inp('terrain.'+t+'.'+f,f==='move'?1:0.05)+'</td>').join('')+'</tr>').join('');
+  document.querySelectorAll('input[data-path]').forEach(i=>i.addEventListener('input',refresh));
+  refresh();
+}
+// 入力欄の値を読み取った設定（丸め済み）
+function readInputs(){
+  const c=clone(cfg);
+  document.querySelectorAll('input[data-path]').forEach(i=>{const v=parseFloat(i.value);if(!isNaN(v))setP(c,i.dataset.path,v);});
+  return cfgFrom(c);
+}
+function refresh(){
+  document.querySelectorAll('input[data-path]').forEach(i=>i.classList.toggle('chg',parseFloat(i.value)!==getP(DEFAULTS,i.dataset.path)));
+  const dirty=JSON.stringify(readInputs())!==JSON.stringify(saved);
+  const st=document.getElementById('status');
+  if(dirty){st.textContent='まだ反映していない変更があります';st.className='status dirty';}
+  else if(!st.dataset.msg){st.textContent='';st.className='status';}
+  else{st.textContent=st.dataset.msg;st.className='status';}
+}
+function setMsg(t){const st=document.getElementById('status');st.dataset.msg=t;refresh();}
+
+// 既定値から変わった値だけを取り出す
+function diff(o,d){
+  const out={};
+  for(const k in o){
+    if(o[k]&&typeof o[k]==='object'){const sub=diff(o[k],d[k]||{});if(Object.keys(sub).length)out[k]=sub;}
+    else if(o[k]!==d[k])out[k]=o[k];
+  }
+  return out;
+}
+
+document.getElementById('bApply').onclick=()=>{
+  const c=readInputs();
+  saveCfg(c);saved=clone(c);cfg=clone(c);build();
+  const g=window.opener&&!window.opener.closed?window.opener:null;
+  if(g)g.postMessage({type:CFG_MSG,cfg:c},'*');
+  const t=new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  setMsg(t+' に反映しました'+(g?'':'（ゲーム画面を開き直したときにも反映されます）'));
+};
+document.getElementById('bRevert').onclick=()=>{cfg=clone(saved);build();setMsg('反映前の値に戻しました');};
+document.getElementById('bDefault').onclick=()=>{cfg=clone(DEFAULTS);build();setMsg('既定値を入れました。「ゲームに反映」で確定します');};
+document.getElementById('bExport').onclick=()=>{
+  const d=diff(readInputs(),DEFAULTS);
+  document.getElementById('exportText').value=Object.keys(d).length?JSON.stringify(d,null,2):'（既定値から変えた値はありません）';
+  const box=document.getElementById('exportBox');box.hidden=false;box.scrollIntoView({behavior:'smooth',block:'start'});
+};
+document.getElementById('bCopy').onclick=async()=>{
+  const ta=document.getElementById('exportText');
+  try{await navigator.clipboard.writeText(ta.value);setMsg('書き出した内容をコピーしました');}
+  catch(e){ta.select();document.execCommand('copy');setMsg('書き出した内容をコピーしました');}
+};
+build();
+</script>
+</body>
+</html>

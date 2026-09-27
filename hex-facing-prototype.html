@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>向きの兵棋盤（試作）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="hex-common.css">
+<style>
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:1rem;max-width:1200px;margin:0 auto;padding:.6rem 1.25rem 1rem}
+@media (max-width:860px){.layout{grid-template-columns:minmax(0,1fr)}}
+.board-wrap{align-self:start;background:var(--map);border:1px solid var(--line);border-radius:6px;overflow-x:auto}
+svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:manipulation;user-select:none}
+.cell{fill:transparent;stroke:var(--ink);stroke-opacity:.18;stroke-width:1;cursor:pointer}
+.cell.arc-blue{fill:var(--arc-blue)} .cell.arc-red{fill:var(--arc-red)}
+.cell.zoc{fill:var(--zoc)}
+.cell.move{fill:var(--move);fill-opacity:.6} .cell.target{fill:var(--target);fill-opacity:.7}
+.tile{pointer-events:none}
+.rv{fill:none;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.rv-bank{stroke:#7A7461}.rv-water{stroke:#3590D6}.rv-shine{stroke:#7CCBF5;opacity:.9}
+.lbl{font-family:var(--sans);font-size:11px;font-weight:700;fill:var(--ink);paint-order:stroke;stroke:var(--map);stroke-width:3px;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.dmg{font-size:12px;paint-order:stroke;stroke:var(--map);stroke-width:3px}
+.unit{cursor:pointer}
+.unit .totsu{stroke:var(--ink);stroke-width:1.2}
+.unit.side-blue .totsu{fill:var(--blue)} .unit.side-red .totsu{fill:var(--red)}
+.unit.done{opacity:.55}
+.ulabel{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--unit-text);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.hpbg{fill:var(--grid)} .hp{fill:var(--ink)}
+.dis{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--ink);paint-order:stroke;stroke:var(--map);stroke-width:3px}
+.unit.hid .totsu,.mark .totsu{fill-opacity:.5;stroke-dasharray:3 2}
+.mark{pointer-events:none;opacity:.75}
+.badge{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--ink);paint-order:stroke;stroke:var(--map);stroke-width:3px}.badge.pend{opacity:.5}
+.shot{fill:var(--red);stroke:var(--map);stroke-width:1.5;pointer-events:none}
+.prompt{border-left-color:var(--target)}
+button.on{outline:2px solid var(--ink);outline-offset:1px}
+.sel-ring{fill:none;stroke:var(--ink);stroke-width:2;stroke-dasharray:4 3}
+.panel{display:flex;flex-direction:column;gap:.8rem}
+.turn{font-family:var(--serif);font-weight:800;font-size:1.15rem;letter-spacing:.04em;padding-left:.6rem;border-left:5px solid var(--blue)}
+.turn.side-red{border-left-color:var(--red)}
+.uname{font-family:var(--serif);font-weight:800;font-size:1.05rem}
+dl{display:grid;grid-template-columns:auto 1fr;gap:.1rem .8rem;margin:.4rem 0 0;font-size:.9rem}
+dt{color:var(--muted)} dd{margin:0}
+#log{list-style:none;margin:.3rem 0 0;padding:0;max-height:260px;overflow-y:auto;font-size:.84rem}
+#log li{padding:.3rem 0;border-bottom:1px solid var(--line)}
+#log li.sys{color:var(--muted)}
+#log li.kill{font-weight:700}
+</style>
+</head>
+<body>
+<header>
+  <h1>向きの兵棋盤</h1>
+  <p>槍・騎・弓の試作盤です。部隊と地形は「マップ編集」、数値は「数値調整」（どちらも別のタブ）で作ります。</p>
+</header>
+
+<main class="layout">
+  <div class="board-wrap"><svg id="board" role="img" aria-label="ヘックスマップ"></svg></div>
+  <aside class="panel">
+    <div class="box" id="turnBox"></div>
+    <div class="box" id="unitBox"></div>
+    <div class="box"><h2>戦闘記録</h2><ol id="log"></ol></div>
+    <details class="box">
+      <summary>操作説明</summary>
+      <p class="hint" style="margin-top:.4rem">ユニットを選ぶと、移動できるマスに消費移動力、攻撃できる敵に予想される損害の人数が出ます（「反」は反撃で失う人数）。兵数が多いほど相手に与える損害も大きくなります。前方から攻撃すると反撃を受けます。薄い色の範囲は攻撃可能範囲です。<br>地形の効果はユニットの情報欄に出ます。<br>キー操作：Q／E 旋回、H 隠蔽、M 行軍の切り替え、Z 取り消し、Enter ターン終了、Esc 選択解除</p>
+    </details>
+  </aside>
+</main>
+
+
+<script src="hex-config.js"></script>
+<script src="hex-board.js"></script>
+<script>
+const SIDE_NAME={blue:'青軍',red:'赤軍'};
+const FORM_STORE='hex-facing-formation-v4';
+// 配置：byMap＝マップごとに配置画面で動かした位置・向き {rev,units}。伏せるのはゲーム中の「隠蔽」で。部隊の数や兵数はマップ編集で決める
+let formation={byMap:{}};
+try{const o=JSON.parse(localStorage.getItem(FORM_STORE));if(o&&o.byMap&&typeof o.byMap==='object')formation=o;}catch(e){}
+function saveFormation(){
+  formation.byMap[state.mapId]={rev:state.mapRev,units:state.units.map(u=>({side:u.side,type:u.type,q:u.q,r:u.r,f:u.f,men:u.men0}))};
+  try{localStorage.setItem(FORM_STORE,JSON.stringify(formation));}catch(e){}
+}
+
+let cfg=loadCfg();
+
+const COVER=new Set(['forest','hill','mountain']); // 隠れられる地形
+const onCover=p=>COVER.has(terOf(p));
+const terCfg=p=>cfg.terrain[terOf(p)]||{move:0,def:1,atk:1};
+const cavBlocked=(type,p)=>type==='cav'&&terOf(p)==='mountain'; // 騎兵は山に入れない
+const TOTSU='M-16,9 L16,9 L16,-5 L7,-5 L7,-14 L-7,-14 L-7,-5 L-16,-5 Z';
+
+function relAngle(u,pos){
+  const a=toPix(u.q,u.r),b=toPix(pos.q,pos.r);
+  let d=Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI-60*u.f;
+  d=((d%360)+540)%360-180;return Math.abs(d);
+}
+
+/* ---- game state ---- */
+let state, showZoc=false;
+function newGame(edit){
+  gen++;busy=false;
+  const db=loadMaps(),map=findMap(db,db.current);useMap(map); // 戦闘中にマップが編集されても、この戦闘の地形は変わらない
+  let id=0;const units=[];
+  const add=(side,type,q,r,f,men)=>{
+    if(!TYPES.includes(type)||!SIDE_NAME[side]||!cells.has(key(q,r))||units.some(u=>u.q===q&&u.r===r))return;
+    units.push(makeUnit(id++,side,type,q,r,f,men));
+  };
+  // 配置画面で動かした配置があればそれを使う。マップの部隊が編集されたら、マップの初期配置に戻る
+  const saved=formation.byMap[map.id];
+  if(saved&&saved.rev===map.rev&&Array.isArray(saved.units))saved.units.forEach(o=>add(o.side,o.type,o.q,o.r,o.f,o.men));
+  else (map.units||[]).forEach(o=>{const c=fromCR(o.col,o.row);add(o.side,o.type,c.q,c.r,o.f,o.men);});
+  units.filter(u=>cavBlocked(u.type,u)).forEach(u=>{const c=[...cells.values()].filter(c=>!cavBlocked(u.type,c)&&!units.some(x=>x.q===c.q&&x.r===c.r)).sort((a,b)=>dist(a,u)-dist(b,u))[0];if(c){u.q=c.q;u.r=c.r;}}); // 山に置かれた騎兵は近くの山以外へよける
+  renumber(units);
+  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[]};
+  if(!edit&&canStart()){startBattle();return;} // 保存済みの配置でそのまま始める
+  log(canStart()?'配置：部隊の位置と向きを決めてください':'このマップには両軍の部隊がそろっていません。マップ編集で部隊を置いてください','sys');render();
+}
+// 戦闘の途中なら確認してから配置画面へ
+function editFormation(){
+  if(state.phase==='battle'&&!state.winner&&(state.turn>1||state.history.length)&&!confirm('配置に戻ると、今の戦闘は最初からになります。よろしいですか？'))return;
+  newGame(true);
+}
+const canStart=()=>['blue','red'].every(s=>state.units.some(u=>u.side===s));
+function startBattle(){
+  if(state.phase!=='setup'||!canStart())return;
+  state.phase='battle';state.selected=null;
+  log('戦闘開始　青軍'+sideMen('blue')+'人、赤軍'+sideMen('red')+'人','sys');
+  startSide('blue');log('第1ターン　青軍の手番','sys');render();
+}
+/* ---- 配置 ---- */
+const DEF_F={blue:0,red:3}; // 青は右、赤は左を向く
+function makeUnit(id,side,type,q,r,f,men){
+  const men0=Math.max(1,Math.round(men||cfg.units[type].men));
+  return {id,no:0,side,type,q,r,f:((f|0)%6+6)%6,men0,hp:men0*cfg.units[type].hp,mp:0,attacked:false,dis:false,
+    hidden:false,pending:false,sprung:false,mark:null,shotFrom:null};
+  // hidden＝隠蔽中、pending＝手番の終わりに隠れる、sprung＝この隠蔽での奇襲は済んだ、mark＝敵が最後に見た位置、shotFrom＝矢を受けた方向
+}
+function renumber(units){const n={};units.forEach(u=>{const k=u.side+u.type;u.no=n[k]=(n[k]||0)+1;});}
+const sideMen=s=>state.units.filter(u=>u.side===s).reduce((n,u)=>n+u.men0,0);
+const formChanged=()=>{renumber(state.units);saveFormation();render();};
+// 赤軍をAIに任せているときは、赤軍はマップのとおり（触れない）
+const deployable=u=>u.side==='blue'||!aiRed;
+function rotateSetup(u,dl){if(!deployable(u))return;u.f=(u.f+dl+6)%6;formChanged();}
+function placeSetup(u,q,r){if(!deployable(u)||!inZone(u.side,q,r)||unitAt(q,r)||cavBlocked(u.type,{q,r}))return;u.q=q;u.r=r;formChanged();}
+function resetFormation(){delete formation.byMap[state.mapId];try{localStorage.setItem(FORM_STORE,JSON.stringify(formation));}catch(e){}newGame(true);}
+function startSide(side){state.units.filter(u=>u.side===side).forEach(u=>{u.mp=cfg.units[u.type].mp;u.attacked=false;u.dis=false;});}
+const maxHp=u=>u.men0*cfg.units[u.type].hp;
+const menOf=u=>Math.max(0,Math.ceil(u.hp/cfg.units[u.type].hp-1e-9)); // 残りHPを1人あたりHPで割って切り上げ
+const lossOf=(u,dmg)=>menOf(u)-menOf({...u,hp:u.hp-dmg}); // ダメージで減る人数
+const unitAt=(q,r)=>state.units.find(u=>u.q===q&&u.r===r);
+// 画面を見ている側（決着後は全員見える）。AIが赤軍なら配置中も含めて常に青軍の視点
+function viewer(){
+  if(state.winner)return null;
+  if(state.phase!=='battle')return aiRed?'blue':null;
+  if(state.prompt){const h=byId(state.prompt.h);if(h)return h.side;}
+  return aiRed?'blue':state.side;
+}
+const seen=(u,v=viewer())=>v==null||u.side===v||!u.hidden;
+const seenAt=(q,r)=>{const u=unitAt(q,r);return u&&seen(u)?u:null;};
+const byId=id=>state.units.find(u=>u.id===id);
+const inContact=u=>state.units.some(e=>e.side!==u.side&&!e.hidden&&dist(u,e)===1); // 隠れた敵は数えない
+const inZoc=(q,r,side)=>state.units.some(e=>e.side!==side&&!e.hidden&&dist(e,{q,r})===1&&relAngle(e,{q,r})<=60+EPS); // 隠れた部隊はZOCを持たない
+function moveCost(u,d){
+  const rel=(d-u.f+6)%6,dirCost=rel===0?cfg.mvF:(rel===1||rel===5)?cfg.mvFD:(rel===2||rel===4)?cfg.mvRD:cfg.mvR;
+  const dest={q:u.q+DIRS[d][0],r:u.r+DIRS[d][1]};
+  if(cavBlocked(u.type,dest))return Infinity;
+  return dirCost+terCfg(dest).move; // 進入先の地形コストを加算
+}
+const stepCost=(u,d)=>moveCost(u,d)+(u.hidden&&state.march!=='normal'?cfg.hideMove:0); // 隠蔽行軍は割増
+function canStrike(a,t){const d=dist(a,t),U=cfg.units[a.type];return d>=U.rmin&&d<=U.rmax&&relAngle(a,t)<=90+EPS;}
+function canAttack(a,t){
+  if(a.attacked||a.pending||t.side===a.side||t.hidden)return false;
+  return canStrike(a,t);
+}
+const surprise=u=>u.hidden&&!u.sprung; // この攻撃が奇襲になるか
+// 隠蔽は森・丘・山で。隠れたまま奇襲を済ませた弓兵は、もう一度隠蔽して奇襲をやり直せる
+const canHide=u=>state.phase==='battle'&&u.side===state.side&&(!u.hidden||u.sprung)&&!u.pending&&!u.attacked&&onCover(u)&&!inContact(u)&&u.mp>=cfg.hideCost;
+function computeAttack(a,t,amb){
+  const r=relAngle(t,a);let cat,dm;
+  if(r<=30+EPS){cat='正面';dm=1}else if(r<=90+EPS){cat='斜め前';dm=1}else if(r<=150+EPS){cat='斜め後ろ';dm=cfg.side}else{cat='真後ろ';dm=cfg.rear}
+  const A=cfg.units[a.type],D=cfg.units[t.type],mx=cfg.matrix[a.type][t.type];
+  const ad=a.dis?cfg.disorder:1,dd=t.dis?cfg.disorder:1;
+  const sf=(t.type==='spear'&&a.type==='cav'&&r<=90+EPS)?cfg.spearFrontDef:1;
+  const ta=terOf(a),td=terOf(t),tam=terCfg(a).atk*(a.type==='cav'&&ta==='forest'?cfg.cavForest:1),tdm=terCfg(t).def;
+  const am=amb?cfg.ambush:1;
+  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*dm*mx*ad*tam*am/(D.def*dd*sf*tdm))); // ランチェスター：損害は攻撃側の兵数に比例
+  const notes=[cat+(dm!==1?' ×'+dm:'')];
+  if(amb)notes.unshift('奇襲 ×'+cfg.ambush);
+  if(mx!==1)notes.push('相性 ×'+mx);
+  if(sf!==1)notes.push('槍の正面防御 ÷'+sf);
+  if(tam!==1)notes.push(TER_NAME[ta]+'から攻撃 ×'+ +tam.toFixed(2));
+  if(tdm!==1)notes.push(TER_NAME[td]+'の防御 ÷'+tdm);
+  if(a.dis)notes.push('攻撃側乱れ ×'+cfg.disorder);
+  if(t.dis)notes.push('防御側乱れ');
+  return {dmg,dm,cat,notes};
+}
+// 前方（正面・斜め前）から攻撃され、攻撃側が射程内にいれば反撃する
+function canCounter(a,t){
+  if(cfg.counter<=0||relAngle(t,a)>90+EPS)return false;
+  const d=dist(a,t),D=cfg.units[t.type];
+  return d>=D.rmin&&d<=D.rmax;
+}
+function computeCounter(a,t,hitDmg){
+  if(!canCounter(a,t))return null;
+  const r=computeAttack({...t,hp:t.hp-hitDmg},a); // 攻撃を受けて残った兵で反撃
+  return {...r,dmg:Math.max(1,Math.round(r.dmg*cfg.counter))};
+}
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uname=u=>SIDE_NAME[u.side]+cfg.units[u.type].name+u.no;
+function log(text,cls='',only=null){state.log.push({text,cls,only});} // only＝その軍にだけ見える記録
+function pushHistory(){state.history.push(JSON.stringify({units:state.units,logLen:state.log.length,winner:state.winner}));}
+
+/* ---- actions ---- */
+function tryMove(u,d){
+  if(state.prompt||state.phase!=='battle'||state.winner||u.side!==state.side||u.attacked||u.pending)return;
+  const nq=u.q+DIRS[d][0],nr=u.r+DIRS[d][1];
+  if(!cells.has(key(nq,nr)))return;
+  const o=unitAt(nq,nr);
+  if(o&&(o.side===u.side||!o.hidden))return;
+  const cost=stepCost(u,d);if(u.mp<cost)return;
+  if(o){ // 隠れた敵のいるマスに入ろうとした：遭遇して止まる。相手の攻撃範囲の中なら強制的に奇襲を受ける
+    state.history=[];u.mp=0;
+    log('遭遇！ '+uname(u)+'が隠れていた'+uname(o)+'とぶつかった','kill');
+    if(canStrike(o,u))hiddenStrike(o,u,true);
+    else{o.hidden=false;o.sprung=false;o.mark=null;log('　'+uname(o)+'は背後を突かれる形で見つかった（奇襲なし）','sys');}
+    render();return;
+  }
+  pushHistory();
+  const rel=(d-u.f+6)%6;
+  u.q=nq;u.r=nr;u.mp-=cost;if(rel===1||rel===5)u.f=d;
+  if(u.hidden){
+    if(state.march==='normal')reveal(u,'通常行軍で姿を現した');
+    else if(!onCover(u))reveal(u,'隠れ場所を出て姿を現した');
+  }
+  if(inZoc(nq,nr,u.side)){u.mp=0;log(uname(u)+'が敵のZOCに入り停止','sys');}
+  render();
+  if(!u.hidden)return reactions(u);
+}
+function reveal(u,why){u.hidden=false;u.sprung=false;u.mark=null;state.history=[];log(uname(u)+'が'+why,'sys');}
+function hideUnit(u){
+  if(!canHide(u))return;
+  pushHistory();u.mp=0;u.pending=true;
+  log(uname(u)+'が隠蔽の準備（手番の終わりに'+(u.hidden?'改めて身を潜める':'隠れる')+'）','sys',u.side);render();
+}
+function removeUnitDead(u){state.units=state.units.filter(x=>x!==u);log(uname(u)+'が壊滅','kill');}
+function checkWinner(){['blue','red'].forEach(s=>{if(!state.winner&&!state.units.some(u=>u.side===s)){state.winner=s==='blue'?'red':'blue';log(SIDE_NAME[state.winner]+'の勝利','kill');}});}
+// 隠れた部隊からの攻撃。反撃は受けない。奇襲なら倍率がかかり、相手の隊列が乱れる。
+// 弓兵が2マス以上離れて射た場合は隠れたままで、相手には矢の来た方向だけが分かる
+function hiddenStrike(a,t,amb){
+  const res=computeAttack(a,t,amb),tm=menOf(t);
+  t.hp-=res.dmg;if(amb)t.dis=true;
+  const lost=tm-menOf(t),rest='残り'+Math.max(0,menOf(t))+'人',fx=amb?'（反撃なし・隊列乱れ）':'（反撃なし）';
+  if(a.type==='archer'&&dist(a,t)>=2){
+    a.sprung=true;t.shotFrom=dirTo(t,a);
+    log(uname(a)+'（伏兵）→ '+uname(t)+'：'+res.notes.join('、')+'、'+lost+'人減、'+rest+fx+'。隠れたまま','',a.side);
+    log(uname(t)+'が'+DIR_NAME[t.shotFrom]+'の方向から矢を受けた：'+lost+'人減、'+rest+(amb?'（奇襲・隊列乱れ）':''),'kill',t.side);
+  }else{
+    a.hidden=false;a.sprung=false;a.mark=null;
+    log(uname(a)+'（伏兵）→ '+uname(t)+'：'+res.notes.join('、')+'、'+lost+'人減、'+rest+fx);
+  }
+  if(t.hp<=0)removeUnitDead(t);
+  checkWinner();
+}
+// 奇襲をまだ使っていない隠れた部隊の攻撃範囲に敵が入ったら、奇襲するか見送るかを選ぶ
+async function reactions(m){
+  const hs=state.units.filter(h=>h.side!==m.side&&surprise(h)&&canStrike(h,m));
+  for(const h of hs){
+    if(state.winner||!state.units.includes(m)||!state.units.includes(h)||!surprise(h)||!canStrike(h,m))continue;
+    const go=(h.side==='red'&&aiRed)?aiWantsAmbush(h,m):await askAmbush(h,m);
+    if(go){
+      state.history=[];m.mp=0;
+      if(!(h.type==='archer'&&dist(h,m)>=2))log('伏兵！ '+uname(h)+'が'+uname(m)+'を奇襲','kill');
+      hiddenStrike(h,m,true);
+    }
+    render();
+  }
+}
+function askAmbush(h,m){return new Promise(res=>{state.prompt={h:h.id,m:m.id,res};render();});}
+function answerAmbush(go){const p=state.prompt;if(!p)return;state.prompt=null;p.res(go);}
+function tryTurn(u,delta){
+  if(state.prompt||state.phase!=='battle'||state.winner||u.side!==state.side)return;
+  const contact=inContact(u),cost=contact?cfg.contactTurnCost:cfg.turnCost;
+  if(u.mp<cost)return;
+  pushHistory();
+  u.f=(u.f+delta+6)%6;u.mp-=cost;
+  if(contact&&!u.dis){u.dis=true;log(uname(u)+'が接触中に旋回、隊列が乱れた','sys');}
+  render();
+}
+function doAttack(a,t){
+  if(state.phase!=='battle'||!canAttack(a,t)||state.winner)return;
+  pushHistory();
+  if(a.hidden){a.attacked=true;a.mp=0;hiddenStrike(a,t,!a.sprung);state.history=[];render();return;}
+  const res=computeAttack(a,t);
+  const tm=menOf(t);t.hp-=res.dmg;a.attacked=true;a.mp=0;
+  log(uname(a)+' → '+uname(t)+'：'+res.notes.join('、')+'、'+(tm-menOf(t))+'人減、残り'+menOf(t)+'人');
+  if(t.hp<=0){state.units=state.units.filter(u=>u!==t);log(uname(t)+'が壊滅','kill');}
+  else{
+    const c=computeCounter(a,t,0);
+    if(c){
+      const am=menOf(a);a.hp-=c.dmg;
+      log('　反撃 '+uname(t)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');
+      if(a.hp<=0){state.units=state.units.filter(u=>u!==a);log(uname(a)+'が壊滅','kill');}
+    }
+  }
+  checkWinner();
+  render();
+}
+function endTurn(){
+  if(state.prompt||state.phase!=='battle'||state.winner||(busy&&state.side!=='red'))return;
+  const other=state.side==='blue'?'red':'blue';
+  state.units.filter(u=>u.side===state.side).forEach(u=>{
+    u.shotFrom=null; // 矢の方向の表示は、自軍の手番の終わりまで
+    if(!u.pending)return;
+    u.pending=false; // 隠蔽を選んだ部隊は、手番の終わりに隠れる
+    if(!onCover(u)||inContact(u)){log(uname(u)+'は隠れられなかった','sys',u.side);return;}
+    u.sprung=false;
+    if(u.hidden){log(uname(u)+'が改めて身を潜めた（次の攻撃は奇襲になる）','sys',u.side);return;}
+    u.hidden=true;u.mark={q:u.q,r:u.r};
+    log(uname(u)+'が隠れた','sys',u.side);
+    log(SIDE_NAME[u.side]+'の'+cfg.units[u.type].name+'が姿を消した','sys',other);
+  });
+  state.side=state.side==='blue'?'red':'blue';
+  if(state.side==='blue')state.turn++;
+  startSide(state.side);state.selected=null;state.history=[];
+  log('第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番','sys');render();
+  if(state.side==='red'&&aiRed)setTimeout(runAI,350);
+}
+
+/* ---- AI (red) ---- */
+let aiRed=true,busy=false,gen=0;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const nearestDist=(u,list)=>list.reduce((m,e)=>Math.min(m,dist(u,e)),Infinity);
+function planFor(u){
+  // 隠れた敵は知らないものとして考える
+  const occ=new Set(state.units.filter(o=>o!==u&&!(o.side!==u.side&&o.hidden)).map(o=>key(o.q,o.r)));
+  const enemies=state.units.filter(e=>e.side!==u.side&&!e.hidden);
+  const sk=s=>s.q+','+s.r+','+s.f+','+(s.dis?1:0);
+  const start={q:u.q,r:u.r,f:u.f,mp:u.mp,dis:u.dis,prev:null,act:null};
+  const best=new Map([[sk(start),start]]);const queue=[start];
+  while(queue.length){
+    let bi=0;for(let i=1;i<queue.length;i++)if(queue[i].mp>queue[bi].mp)bi=i;
+    const s=queue.splice(bi,1)[0];if(best.get(sk(s))!==s)continue;
+    const push=n=>{const k=sk(n),o=best.get(k);if(!o||o.mp<n.mp){best.set(k,n);queue.push(n);}};
+    const contact=enemies.some(e=>dist(e,s)===1),tc=contact?cfg.contactTurnCost:cfg.turnCost;
+    if(s.mp>=tc)[-1,1].forEach(dl=>push({q:s.q,r:s.r,f:(s.f+dl+6)%6,mp:s.mp-tc,dis:s.dis||contact,prev:s,act:{t:'turn',dl}}));
+    for(let d=0;d<6;d++){
+      const nq=s.q+DIRS[d][0],nr=s.r+DIRS[d][1],k=key(nq,nr);
+      if(!cells.has(k)||occ.has(k))continue;
+      const cost=moveCost(s,d);if(s.mp<cost)continue;
+      const rel=(d-s.f+6)%6,zoc=inZoc(nq,nr,u.side);
+      push({q:nq,r:nr,f:(rel===1||rel===5)?d:s.f,mp:zoc?0:s.mp-cost,dis:s.dis,prev:s,act:{t:'move',d}});
+    }
+  }
+  let top=null;
+  best.forEach(s=>{const ev=evalState(u,s,enemies);if(!top||ev.score>top.score)top={...ev,s};});
+  const acts=[];for(let s=top.s;s.prev;s=s.prev)acts.unshift(s.act);
+  return {acts,target:top.target};
+}
+function evalState(u,s,enemies){
+  const V={q:s.q,r:s.r,f:s.f,type:u.type,hp:u.hp,dis:s.dis,side:u.side,attacked:false};
+  const pct=(n,x)=>n*100/maxHp(x);
+  let atkVal=0,target=null,kills=false;
+  enemies.forEach(t=>{if(canAttack(V,t)){const r=computeAttack(V,t),k=r.dmg>=t.hp,c=k?null:computeCounter(V,t,r.dmg);
+    let v=pct(Math.min(r.dmg,t.hp),t)+(k?35:0);if(c)v-=pct(Math.min(c.dmg,u.hp),u)+(c.dmg>=u.hp?35:0);if(v>atkVal){atkVal=v;target=t;kills=k;}}});
+  let threat=0;
+  enemies.forEach(e=>{
+    if(kills&&e===target)return;
+    const E=cfg.units[e.type],d=dist(e,V);if(d>E.mp+E.rmax)return;
+    const r=computeAttack({q:e.q,r:e.r,f:e.f,type:e.type,hp:e.hp,dis:false,side:e.side,attacked:false},V);
+    let dm=r.dm,dmg=pct(r.dmg,u);
+    if(e.type==='cav'&&d>=2&&dm<cfg.side){dmg=dmg*cfg.side/dm;dm=cfg.side;} // 騎兵は回り込んでくると想定
+    const front=dmg/dm;threat+=front*0.12+(dmg-front)*0.6;
+  });
+  const near=nearestDist(V,enemies);
+  let pos=u.type==='archer'?-Math.abs(near-3)*3-(near===1?10:0):-near*3;
+  return {score:atkVal-threat+pos,target};
+}
+function aiWantsAmbush(h,m){
+  const r=computeAttack(h,m,true);
+  return r.dmg>=m.hp||r.dm>1||lossOf(m,r.dmg)>=Math.max(1,menOf(m)*0.25); // 大きく削れるときだけ奇襲し、あとは見送る
+}
+const aiShouldHide=(u,en)=>canHide(u)&&nearestDist(u,en)<=6;
+async function runAI(){
+  if(busy||state.winner||state.side!=='red'||state.phase!=='battle')return;
+  busy=true;const g=gen;
+  const enemies=()=>state.units.filter(e=>e.side==='blue'&&!e.hidden);
+  const order=state.units.filter(u=>u.side==='red').sort((a,b)=>nearestDist(a,enemies())-nearestDist(b,enemies()));
+  for(const u of order){
+    if(g!==gen||state.winner)break;
+    if(!state.units.includes(u))continue;
+    if(u.hidden){ // 伏兵はその場で待ち、狙える敵がいれば攻撃する
+      const ts=enemies().filter(t=>canAttack(u,t)).map(t=>({t,v:lossOf(t,computeAttack(u,t,surprise(u)).dmg)})).sort((a,b)=>b.v-a.v);
+      if(ts.length){state.selected=u.id;render();await sleep(220);doAttack(u,ts[0].t);await sleep(380);}
+      else if(aiShouldHide(u,enemies()))hideUnit(u);
+      continue;
+    }
+    const plan=planFor(u);state.selected=u.id;render();await sleep(220);
+    if(!plan.target&&aiShouldHide(u,enemies())){hideUnit(u);await sleep(220);continue;}
+    for(const a of plan.acts){if(g!==gen||!state.units.includes(u)||state.winner)break;if(a.t==='move')await tryMove(u,a.d);else tryTurn(u,a.dl);await sleep(140);}
+    if(g!==gen)break;
+    if(!state.units.includes(u))continue;
+    if(plan.target&&state.units.includes(plan.target)&&canAttack(u,plan.target)){doAttack(u,plan.target);await sleep(380);}
+    else if(aiShouldHide(u,enemies()))hideUnit(u);
+  }
+  if(g!==gen)return;
+  busy=false;state.selected=null;
+  if(!state.winner)endTurn();else render();
+}
+function undo(){
+  if(busy||state.prompt)return;
+  const s=state.history.pop();if(!s)return;
+  const o=JSON.parse(s);state.units=o.units;state.log.length=o.logLen;state.winner=o.winner;
+  if(state.selected!=null&&!byId(state.selected))state.selected=null;render();
+}
+
+/* ---- render ---- */
+const svg=document.getElementById('board');
+svg.setAttribute('viewBox',VB.join(' '));
+function render(){
+  const v=viewer();
+  let sel=state.selected!=null?byId(state.selected):null;
+  if(sel&&!seen(sel,v))sel=null;
+  const mine=sel&&sel.side===state.side&&!state.winner&&state.phase==='battle'&&!state.prompt;
+  const moves=new Map(),targets=new Map();
+  if(mine&&!sel.attacked&&!sel.pending){
+    for(let d=0;d<6;d++){const nq=sel.q+DIRS[d][0],nr=sel.r+DIRS[d][1],k=key(nq,nr);
+      if(cells.has(k)&&!seenAt(nq,nr)){const c=stepCost(sel,d);if(sel.mp>=c)moves.set(k,{d,c});}}
+    state.units.forEach(t=>{if(canAttack(sel,t)&&seen(t,v)){const r=computeAttack(sel,t,surprise(sel)),c=(r.dmg>=t.hp||sel.hidden)?null:computeCounter(sel,t,r.dmg);targets.set(key(t.q,t.r),{...r,loss:lossOf(t,r.dmg),closs:c?lossOf(sel,c.dmg):0});}});
+  }
+  let h=boardSVG()+'<g>';
+  cells.forEach((c,k)=>{
+    let cls='cell';
+    if(state.phase==='setup'&&sel&&deployable(sel)&&inZone(sel.side,c.q,c.r)&&!unitAt(c.q,c.r)&&!cavBlocked(sel.type,c))cls+=' move';
+    else if(moves.has(k))cls+=' move';
+    else if(targets.has(k))cls+=' target';
+    else if(sel){const U=cfg.units[sel.type],d=dist(sel,c);if(d>=U.rmin&&d<=U.rmax&&relAngle(sel,c)<=90+EPS)cls+=' arc-'+sel.side;
+      else if(showZoc&&!seenAt(c.q,c.r)&&inZoc(c.q,c.r,state.side))cls+=' zoc';}
+    else if(showZoc&&!seenAt(c.q,c.r)&&inZoc(c.q,c.r,state.side))cls+=' zoc';
+    h+='<polygon class="'+cls+'" data-key="'+k+'" points="'+hexPts(c.x,c.y)+'"/>';
+  });
+  h+='</g><g>';
+  moves.forEach((m,k)=>{const c=cells.get(k);h+='<text class="lbl" x="'+c.x+'" y="'+c.y+'">'+m.c+'</text>';});
+  h+='</g><g>';
+  // 敵が最後に見た位置の「？」
+  if(v)state.units.forEach(u=>{
+    if(u.side===v||!u.hidden||!u.mark||seenAt(u.mark.q,u.mark.r))return;
+    const c=cells.get(key(u.mark.q,u.mark.r));if(!c)return;
+    h+='<g class="mark unit side-'+u.side+'" transform="translate('+c.x+','+c.y+')"><path class="totsu" d="'+TOTSU+'"/><text class="ulabel" x="0" y="0">？</text></g>';
+  });
+  state.units.forEach(u=>{
+    if(!seen(u,v))return;
+    const c=cells.get(key(u.q,u.r)),U=cfg.units[u.type];
+    const done=state.phase==='battle'&&u.side===state.side&&(u.attacked||u.pending||u.mp<Math.min(cfg.mvF,cfg.turnCost));
+    h+='<g class="unit side-'+u.side+(done?' done':'')+(u.hidden?' hid':'')+'" data-key="'+key(u.q,u.r)+'" transform="translate('+c.x+','+c.y+')">';
+    if(sel&&sel.id===u.id)h+='<ellipse class="sel-ring" rx="'+(S*0.8)+'" ry="'+(S*0.8*K).toFixed(1)+'"/>';
+    h+='<g transform="rotate('+(SANG[u.f]+90).toFixed(1)+')"><path class="totsu" d="'+TOTSU+'"/></g>';
+    h+='<text class="ulabel" x="0" y="0">'+U.ch+'</text>';
+    h+='<rect class="hpbg" x="-14" y="17" width="28" height="3"/><rect class="hp" x="-14" y="17" height="3" width="'+(28*Math.max(0,u.hp)/maxHp(u)).toFixed(1)+'"/>';
+    if(u.dis)h+='<text class="dis" x="14" y="-12">乱</text>';
+    if(u.hidden||u.pending)h+='<text class="badge'+(u.pending?' pend':'')+'" x="-20" y="-12">伏</text>';
+    if(u.shotFrom!=null){ // 矢の来た方向を示す矢印（向きだけで、距離は分からない）
+      const o=toScreen(DIRS[u.shotFrom][0],DIRS[u.shotFrom][1]),L=Math.hypot(o.x,o.y),ux=o.x/L,uy=o.y/L,tip=L*0.5,base=L*0.8,w=5;
+      h+='<polygon class="shot" points="'+(ux*tip).toFixed(1)+','+(uy*tip).toFixed(1)+' '+(ux*base-uy*w).toFixed(1)+','+(uy*base+ux*w).toFixed(1)+' '+(ux*base+uy*w).toFixed(1)+','+(uy*base-ux*w).toFixed(1)+'"/>';
+    }
+    h+='</g>';
+  });
+  h+='</g><g>';
+  targets.forEach((r,k)=>{const c=cells.get(k);h+='<text class="lbl dmg" x="'+c.x+'" y="'+(c.y-S*K*0.78).toFixed(1)+'">−'+r.loss+'人'+(r.dm!==1?' ×'+r.dm:'')+(r.closs?' 反−'+r.closs+'人':'')+'</text>';});
+  h+='</g>';
+  svg.innerHTML=h;
+  renderPanel(sel,mine,v);
+}
+function terLabel(p){
+  const t=terOf(p);if(t==='plain')return '平地';
+  const T=cfg.terrain[t],fx=[];
+  if(T.def!==1)fx.push('防御×'+T.def);if(T.atk!==1)fx.push('攻撃×'+T.atk);if(t==='forest')fx.push('騎兵の攻撃×'+cfg.cavForest);if(t==='mountain')fx.push('騎兵は進入不可');
+  if(COVER.has(t))fx.push('隠れられる');
+  return TER_NAME[t]+(fx.length?'（'+fx.join('、')+'）':'');
+}
+function renderPanel(sel,mine,v){
+  const tb=document.getElementById('turnBox'),ub=document.getElementById('unitBox');
+  if(state.phase==='setup'){
+    tb.innerHTML='<div class="turn">配置</div><p class="hint" style="margin-top:.4rem">'+(aiRed?'青軍':'各軍')+'の部隊を選ぶと、配置範囲の黄色のマスへ動かせます。↺↻（Q／E）で向きを変えられます。伏せるのはゲーム中の「隠蔽」で、部隊の数や兵数はマップ編集で決めます。</p>'+
+      '<div class="row"><label class="chk">マップ <select id="selMap">'+loadMaps().maps.map(m=>'<option value="'+m.id+'"'+(m.id===state.mapId?' selected':'')+'>'+esc(m.name)+'</option>').join('')+'</select></label><button class="ghost" id="bMaps">マップ編集</button></div>'+
+      '<div class="row"><button id="bStart"'+(canStart()?'':' disabled')+'>戦闘開始</button><button class="ghost" id="bFormReset">マップの初期配置に戻す</button><button class="ghost" id="bCfg2">数値調整</button></div>';
+    const sum=side=>{const us=state.units.filter(u=>u.side===side);return '<dt>'+SIDE_NAME[side]+'</dt><dd>'+(us.length?us.length+'部隊・'+sideMen(side)+'人':'部隊なし')+'</dd>';};
+    let h='<dl style="margin-top:0">'+sum('blue')+sum('red')+'</dl>';
+    if(sel){
+      const U=cfg.units[sel.type],ok=deployable(sel);
+      h+='<div class="uname" style="margin-top:.6rem">'+uname(sel)+'</div><dl><dt>兵数</dt><dd>'+sel.men0+'人</dd><dt>地形</dt><dd>'+terLabel(sel)+'</dd></dl>'+
+        (ok?'<div class="row"><button class="ghost" id="bSL">↺ 左へ</button><button class="ghost" id="bSR">↻ 右へ</button></div>'
+           :'<p class="hint" style="margin-top:.4rem">赤軍はAIに任せているので、マップのとおりに配置されます。</p>');
+    }else h+='<p class="hint" style="margin-top:.4rem">部隊を選んでください。</p>';
+    ub.innerHTML=h;
+    const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
+    on('bSL',()=>rotateSetup(sel,-1));on('bSR',()=>rotateSetup(sel,1));
+    document.getElementById('bStart').onclick=startBattle;
+    document.getElementById('bFormReset').onclick=resetFormation;
+    document.getElementById('bCfg2').onclick=openSettings;
+    document.getElementById('bMaps').onclick=openMaps;
+    document.getElementById('selMap').onchange=e=>selectMap(e.target.value);
+    renderLog(null);
+    return;
+  }
+  if(state.prompt){
+    const h=byId(state.prompt.h),m=byId(state.prompt.m),r=computeAttack(h,m,true),stay=h.type==='archer'&&dist(h,m)>=2;
+    tb.innerHTML='<div class="turn prompt side-'+h.side+'">伏兵の判断（'+SIDE_NAME[h.side]+'）</div>'+
+      '<p style="margin:.5rem 0 0">'+uname(m)+'が、隠れている'+uname(h)+'の攻撃範囲に入りました。</p>'+
+      '<p class="hint" style="margin-top:.3rem">奇襲すると：'+r.notes.join('、')+'、予想 −'+lossOf(m,r.dmg)+'人（反撃なし・隊列乱れ・相手は停止）。'+
+      (stay?uname(h)+'は隠れたままで、相手には矢の来た方向だけが分かります。':uname(h)+'は姿を現します。')+'</p>'+
+      '<div class="row"><button id="bAmbY">奇襲する</button><button class="ghost" id="bAmbN">見送る</button></div>';
+    ub.innerHTML='<p class="hint">見送ると、'+uname(h)+'は隠れたままです。</p>';
+    document.getElementById('bAmbY').onclick=()=>answerAmbush(true);
+    document.getElementById('bAmbN').onclick=()=>answerAmbush(false);
+    renderLog(v);return;
+  }
+  if(state.winner){
+    tb.innerHTML='<div class="turn side-'+state.winner+'">'+SIDE_NAME[state.winner]+'の勝利</div><div class="row"><button id="bNew">もう一度</button><button class="ghost" id="bUndo"'+(state.history.length?'':' disabled')+'>取り消し</button><button class="ghost" id="bEdit">配置からやり直す</button><button class="ghost" id="bCfg">数値調整</button></div>';
+  }else{
+    tb.innerHTML='<div class="turn side-'+state.side+'">第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番</div>'+
+      '<p class="hint" style="margin-top:.2rem">マップ：'+esc(state.mapName)+'</p>'+
+      (busy?'<p class="hint" style="margin-top:.4rem">赤軍が行動中です…</p>':'')+
+      '<div class="row"><button id="bEnd"'+(busy?' disabled':'')+'>ターン終了</button><button class="ghost" id="bUndo"'+(state.history.length&&!busy?'':' disabled')+'>取り消し</button><button class="ghost" id="bNew">最初から</button></div>'+
+      '<div class="row"><button class="ghost" id="bEdit"'+(busy?' disabled':'')+'>配置からやり直す</button><button class="ghost" id="bMaps2">マップ編集</button><button class="ghost" id="bCfg">数値調整</button></div>'+
+      '<div class="row"><label class="chk"><input type="checkbox" id="cAi"'+(aiRed?' checked':'')+'> 赤軍をAIに任せる</label><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label></div>';
+  }
+  if(!sel){ub.innerHTML='<p class="hint">ユニットを選んでください。敵ユニットも選ぶと状態を確認できます。</p>';}
+  else{
+    const U=cfg.units[sel.type],contact=inContact(sel),tc=contact?cfg.contactTurnCost:cfg.turnCost;
+    const canT=mine&&sel.mp>=tc;
+    const st=[];if(sel.hidden&&(sel.side===v||v==null))st.push(sel.sprung?'隠蔽中（奇襲は済み）':'隠蔽中');if(sel.pending)st.push('隠蔽の準備中（手番の終わりに隠れる）');
+    if(sel.shotFrom!=null)st.push(DIR_NAME[sel.shotFrom]+'の方向から矢を受けた');if(contact)st.push('接触中');if(sel.dis)st.push('隊列乱れ（攻防×'+cfg.disorder+'）');if(sel.attacked)st.push('攻撃済み');
+    ub.innerHTML='<div class="uname">'+uname(sel)+'</div><dl>'+
+      '<dt>兵数</dt><dd>'+menOf(sel)+' / '+sel.men0+'人</dd>'+
+      '<dt>移動力</dt><dd>'+(sel.side===state.side?sel.mp:U.mp)+' / '+U.mp+'</dd>'+
+      '<dt>攻撃／防御（1人）</dt><dd>'+U.atk+' / '+U.def+'</dd>'+
+      '<dt>射程</dt><dd>'+(U.rmin===U.rmax?U.rmin:U.rmin+'〜'+U.rmax)+'</dd>'+
+      '<dt>地形</dt><dd>'+terLabel(sel)+'</dd>'+
+      '<dt>状態</dt><dd>'+(st.join('、')||'通常')+'</dd></dl>'+
+      (mine&&!busy?'<div class="row"><button id="bL"'+(canT?'':' disabled')+'>左に旋回（'+tc+'）</button><button id="bR"'+(canT?'':' disabled')+'>右に旋回（'+tc+'）</button></div>'+
+        (contact&&!sel.dis?'<p class="hint" style="margin-top:.4rem">接触中に旋回すると隊列が乱れます。</p>':'')+
+        (sel.hidden?'<div class="row"><span class="hint">行軍（M）</span><button id="bMH" class="'+(state.march==='normal'?'ghost':'on')+'">隠蔽行軍（+'+cfg.hideMove+'/マス）</button><button id="bMN" class="'+(state.march==='normal'?'on':'ghost')+'">通常行軍</button></div>'+
+          '<p class="hint" style="margin-top:.4rem">'+(state.march==='normal'?'通常行軍で動くと姿を現します。':'森・丘・山の中なら隠れたまま動けます。')+
+          (sel.sprung?'奇襲は済んでいます。もう一度「隠蔽」すると、次の攻撃が再び奇襲になります。':'攻撃すると奇襲になります'+(sel.type==='archer'?'（2マス以上離れて射れば隠れたまま）':'')+'。')+'</p>':'')+
+        (onCover(sel)&&!sel.pending&&(!sel.hidden||sel.sprung)?'<div class="row"><button id="bHide"'+(canHide(sel)?'':' disabled')+'>隠蔽する（H）</button></div><p class="hint" style="margin-top:.4rem">移動力が'+cfg.hideCost+'以上残っていて敵と接していなければ、手番の終わりに隠れます。この部隊の行動はそこで終わります。</p>':''):'');
+  }
+  const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
+  on('bEnd',endTurn);on('bUndo',undo);on('bNew',()=>newGame(false));on('bEdit',editFormation);on('bCfg',openSettings);on('bMaps2',openMaps);
+  on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));
+  on('bHide',()=>hideUnit(sel));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
+  const ai=document.getElementById('cAi');if(ai)ai.onchange=()=>{aiRed=ai.checked;if(aiRed&&state.side==='red'&&state.phase==='battle')runAI();};
+  const z=document.getElementById('cZoc');if(z)z.onchange=()=>{showZoc=z.checked;render();};
+  renderLog(v);
+}
+function renderLog(v){
+  document.getElementById('log').innerHTML=state.log.filter(l=>!l.only||v==null||l.only===v).reverse().map(l=>'<li class="'+l.cls+'">'+l.text+'</li>').join('');
+}
+
+/* ---- input ---- */
+svg.addEventListener('click',e=>{
+  if(busy||state.prompt)return;
+  const el=e.target.closest('[data-key]');if(!el)return;
+  const [q,r]=el.dataset.key.split(',').map(Number);
+  const sel=state.selected!=null?byId(state.selected):null;
+  const u=seenAt(q,r);
+  if(sel&&sel.side===state.side&&u&&u.side!==sel.side&&canAttack(sel,u)){doAttack(sel,u);return;}
+  if(state.phase==='setup'){
+    if(u)state.selected=u.id;else if(sel&&inZone(sel.side,q,r)){placeSetup(sel,q,r);return;}else state.selected=null;
+    render();return;
+  }
+  if(u){state.selected=u.id;render();return;}
+  if(sel&&sel.side===state.side&&dist(sel,{q,r})===1){
+    const d=DIRS.findIndex(v=>sel.q+v[0]===q&&sel.r+v[1]===r);if(d>=0){tryMove(sel,d);return;}
+  }
+  state.selected=null;render();
+});
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||busy||state.prompt)return;
+  const sel=state.selected!=null?byId(state.selected):null;
+  const turn=dl=>{if(!sel)return;if(state.phase==='setup')rotateSetup(sel,dl);else tryTurn(sel,dl);};
+  if(e.key==='q'||e.key==='Q')turn(-1);
+  else if(e.key==='e'||e.key==='E')turn(1);
+  else if(e.key==='z'||e.key==='Z'){undo();}
+  else if((e.key==='h'||e.key==='H')&&sel&&state.phase==='battle')hideUnit(sel);
+  else if((e.key==='m'||e.key==='M')&&sel&&sel.hidden){state.march=state.march==='normal'?'hidden':'normal';render();}
+  else if(e.key==='Enter'){endTurn();}
+  else if(e.key==='Escape'){state.selected=null;render();}
+});
+
+/* ---- 数値調整タブから届いた値を反映 ---- */
+function applyCfg(c){
+  const next=cfgFrom(c);if(JSON.stringify(next)===JSON.stringify(cfg))return; // 同じ値が2通り（メッセージと保存）で届いても1回だけ
+  cfg=next;
+  state.units.forEach(u=>{u.hp=state.phase==='setup'?maxHp(u):Math.min(u.hp,maxHp(u));});
+  log('数値調整を反映しました','sys');render();
+}
+window.addEventListener('message',e=>{if(e.data&&e.data.type===CFG_MSG)applyCfg(e.data.cfg);});
+window.addEventListener('storage',e=>{if(e.key===STORE&&e.newValue){try{applyCfg(JSON.parse(e.newValue));}catch(err){}}});
+function openMaps(){const w=window.open('hex-maps.html','hex-maps');if(w)w.focus();}
+function selectMap(id){const db=loadMaps();if(!db.maps.some(m=>m.id===id))return;db.current=id;saveMaps(db);mapChanged();}
+// 配置中ならすぐ切り替え、戦闘中なら次の戦闘から
+function mapChanged(){
+  const db=loadMaps(),m=findMap(db,db.current);
+  if(state.phase==='setup'){newGame(true);return;}
+  if(m.id!==state.mapId&&state.nextMap!==m.id){state.nextMap=m.id;log('マップ「'+m.name+'」は次の戦闘から使われます','sys');render();}
+}
+window.addEventListener('message',e=>{if(e.data&&e.data.type===MAP_MSG)mapChanged();});
+window.addEventListener('storage',e=>{if(e.key===MAPS_STORE)mapChanged();});
+function openSettings(){const w=window.open('hex-settings.html','hex-settings');if(w)w.focus();}
+
+newGame();
+</script>
+</body>
+</html>

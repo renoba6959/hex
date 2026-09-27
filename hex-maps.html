@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>マップ編集（向きの兵棋盤）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="hex-common.css">
+<style>
+.bar{position:sticky;top:0;z-index:2;background:var(--paper);border-bottom:1px solid var(--line)}
+.bar-in{max-width:1200px;margin:0 auto;padding:.6rem 1.25rem;display:flex;flex-wrap:wrap;gap:.45rem;align-items:center}
+.status{font-size:.85rem;color:var(--muted);margin-left:.4rem}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:1rem;max-width:1200px;margin:0 auto;padding:1rem 1.25rem 2rem}
+@media (max-width:860px){.layout{grid-template-columns:minmax(0,1fr)}}
+.panel{display:flex;flex-direction:column;gap:.8rem}
+.board-wrap{align-self:start;background:var(--map);border:1px solid var(--line);border-radius:6px;overflow-x:auto}
+svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:none;user-select:none}
+.tile{pointer-events:none}
+.rv{fill:none;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}.rv-bank{stroke:#7A7461}.rv-water{stroke:#3590D6}.rv-shine{stroke:#7CCBF5;opacity:.9}
+.cell{fill:transparent;stroke:var(--ink);stroke-opacity:.18;stroke-width:1;cursor:crosshair}
+.cell.zone-blue{fill:var(--arc-blue);fill-opacity:.35}.cell.zone-red{fill:var(--arc-red);fill-opacity:.35}
+.m-zones .cell.zone-blue,.m-zones .cell.zone-red{fill-opacity:1}
+.cell:hover{stroke-opacity:.9;stroke-width:2}
+.cell.drop{stroke-opacity:1;stroke-width:3;stroke-dasharray:4 3}
+.readonly .cell{cursor:not-allowed}
+.unit{pointer-events:none}
+.unit .totsu{stroke:var(--ink);stroke-width:1.2}
+.unit.side-blue .totsu{fill:var(--blue)} .unit.side-red .totsu{fill:var(--red)}
+.ulabel{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--unit-text);text-anchor:middle;dominant-baseline:central}
+.men,.badge{font-family:var(--sans);font-weight:700;font-size:9px;fill:var(--ink);text-anchor:middle;paint-order:stroke;stroke:var(--map);stroke-width:3px}
+.badge{font-family:var(--serif);font-size:10px}
+.sel-ring{fill:none;stroke:var(--ink);stroke-width:2;stroke-dasharray:4 3}
+.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:.35rem}
+.maps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.3rem}
+.maps button{width:100%;text-align:left;display:flex;justify-content:space-between;gap:.5rem}
+.maps .tag{font-weight:500;font-size:.78rem;opacity:.8}
+.brushes{display:grid;grid-template-columns:repeat(5,1fr);gap:.35rem}
+.brushes button{display:flex;flex-direction:column;align-items:center;gap:.15rem;padding:.3rem .2rem;font-size:.8rem}
+.brushes img{width:44px;height:44px;object-fit:contain}
+.pick{display:grid;grid-template-columns:repeat(3,1fr);gap:.35rem}
+button.on{outline:2px solid var(--ink);outline-offset:1px}
+button.b-blue{background:var(--blue);color:#fff}button.b-red{background:var(--red);color:#fff}
+textarea{width:100%;min-height:7rem;font-family:ui-monospace,Menlo,monospace;font-size:.78rem;background:var(--map);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:.5rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>マップ編集</h1>
+  <p>地形・部隊・配置範囲を作れます。「ゲームで使う」で開いているゲーム画面に送られます。</p>
+</header>
+<div class="bar"><div class="bar-in">
+  <button id="bUse">ゲームで使う</button>
+  <button class="ghost" id="bNew">新規</button>
+  <button class="ghost" id="bDup">複製</button>
+  <button class="ghost" id="bRename">名前を変える</button>
+  <button class="ghost" id="bDel">削除</button>
+  <span class="status" id="status" role="status"></span>
+</div></div>
+<main class="layout">
+  <div class="board-wrap" id="wrap"><svg id="board" role="img" aria-label="マップ"><g id="base"></g><g id="grid"></g><g id="units"></g></svg></div>
+  <aside class="panel">
+    <div class="box">
+      <div class="tabs" role="tablist">
+        <button data-mode="terrain">地形</button><button data-mode="units">部隊</button><button data-mode="zones">配置範囲</button>
+      </div>
+      <div id="tool" style="margin-top:.7rem"></div>
+    </div>
+    <div class="box" id="unitBox" hidden></div>
+    <div class="box">
+      <h2>マップ</h2>
+      <ul class="maps" id="maps"></ul>
+    </div>
+    <details class="box">
+      <summary>書き出し・読み込み</summary>
+      <p class="hint" style="margin-top:.4rem">書き出した内容を Claude に渡すと、組み込みのマップにできます。ほかの人のマップは、貼り付けて「読み込む」と新しいマップとして追加されます。</p>
+      <textarea id="io" aria-label="マップのデータ"></textarea>
+      <div class="row"><button class="ghost" id="bExport">書き出す</button><button class="ghost" id="bCopy">コピー</button><button class="ghost" id="bImport">読み込む</button></div>
+    </details>
+  </aside>
+</main>
+<script src="hex-config.js"></script>
+<script src="hex-board.js"></script>
+<script>
+const cfg=loadCfg();
+const TER_LABEL={plain:'平地',forest:'森',hill:'丘',mountain:'山',river:'川'},SIDE_NAME={blue:'青軍',red:'赤軍'};
+const TOTSU='M-16,9 L16,9 L16,-5 L7,-5 L7,-14 L-7,-14 L-7,-5 L-16,-5 Z';
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let db=loadMaps(), editId=db.current, mode='terrain', brush='forest', zoneBrush='blue', side='blue', utype='spear';
+let selKey=null, drag=null, painting=false, saveTimer=null;
+const svg=document.getElementById('board');
+svg.setAttribute('viewBox',VB.join(' '));
+const cur=()=>findMap(db,editId);
+const setMsg=t=>{document.getElementById('status').textContent=t;};
+const crOf=k=>{const [q,r]=k.split(',').map(Number);return {col:colOf(q,r),row:r};};
+const unitAtKey=k=>{const {col,row}=crOf(k);return cur().units.find(u=>u.col===col&&u.row===row);};
+const selUnit=()=>selKey?unitAtKey(selKey):null;
+const cavOnMountain=(type,k)=>type==='cav'&&terOf(cells.get(k))==='mountain';
+function save(unitsChanged){
+  if(unitsChanged)cur().rev=(cur().rev||0)+1; // 部隊を変えたら、ゲームはこのマップの初期配置から始め直す
+  clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveMaps(db);setMsg('保存しました');},300);
+}
+function editable(){const m=cur();if(m.builtin){setMsg('「'+m.name+'」は組み込みのマップなので編集できません。「複製」してから編集してください');return false;}return true;}
+
+/* ---- 描画 ---- */
+function drawBase(){useMap(cur());document.getElementById('base').innerHTML=boardSVG();}
+function drawGrid(){
+  let h='';
+  cells.forEach((c,k)=>{const z=zoneAt.get(k);h+='<polygon class="cell'+(z?' zone-'+z:'')+(drag&&drag.over===k?' drop':'')+'" data-key="'+k+'" points="'+hexPts(c.x,c.y)+'"/>';});
+  document.getElementById('grid').innerHTML=h;
+}
+function drawUnits(){
+  let h='';
+  cur().units.forEach(u=>{
+    const {q,r}=fromCR(u.col,u.row),k=key(q,r),c=cells.get(k);if(!c)return;
+    const U=cfg.units[u.type];
+    h+='<g class="unit side-'+u.side+'" transform="translate('+c.x+','+c.y+')">';
+    if(k===selKey)h+='<ellipse class="sel-ring" rx="'+(S*0.8)+'" ry="'+(S*0.8*K).toFixed(1)+'"/>';
+    h+='<g transform="rotate('+(SANG[u.f]+90).toFixed(1)+')"><path class="totsu" d="'+TOTSU+'"/></g><text class="ulabel">'+U.ch+'</text>';
+    h+='<text class="men" y="22">'+(u.men||U.men)+'人</text>';
+    h+='</g>';
+  });
+  document.getElementById('units').innerHTML=h;
+}
+function drawAll(){drawBase();drawGrid();drawUnits();drawUnitBox();}
+
+/* ---- 右側の道具 ---- */
+function drawTool(){
+  document.querySelectorAll('[data-mode]').forEach(b=>b.className=b.dataset.mode===mode?'':'ghost');
+  svg.classList.toggle('m-zones',mode==='zones');
+  const t=document.getElementById('tool');
+  if(mode==='terrain'){
+    t.innerHTML='<div class="brushes">'+TERRAINS.map(x=>'<button class="ghost'+(x===brush?' on':'')+'" data-t="'+x+'"><img src="tiles/'+x+'.png" alt="">'+TER_LABEL[x]+'</button>').join('')+'</div>'+
+      '<p class="hint" style="margin-top:.5rem">クリックかドラッグで塗ります。川は隣り合う川マスどうしが自動でつながり、行き止まりは山か盤の端へ延びます。</p>';
+    t.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{brush=b.dataset.t;drawTool();});
+  }else if(mode==='units'){
+    const cnt=s=>{const us=cur().units.filter(u=>u.side===s);return us.length+'部隊・'+us.reduce((n,u)=>n+(u.men||cfg.units[u.type].men),0)+'人';};
+    t.innerHTML='<div class="pick">'+['blue','red'].map(s=>'<button class="'+(s===side?'b-'+s+' on':'ghost')+'" data-side="'+s+'">'+SIDE_NAME[s]+'</button>').join('')+'<span></span>'+
+      UNIT_TYPES.map(x=>'<button class="'+(x===utype?'on':'ghost')+'" data-type="'+x+'">'+cfg.units[x].name+'</button>').join('')+'</div>'+
+      '<p class="hint" style="margin-top:.5rem">空いたマスをクリックすると、選んだ部隊を置きます。部隊はドラッグで動かせます。部隊を選んで Q／E で向き、Delete で削除。</p>'+
+      '<p class="hint" style="margin-top:.3rem">青軍 '+cnt('blue')+'　赤軍 '+cnt('red')+'</p>';
+    t.querySelectorAll('[data-side]').forEach(b=>b.onclick=()=>{side=b.dataset.side;drawTool();});
+    t.querySelectorAll('[data-type]').forEach(b=>b.onclick=()=>{utype=b.dataset.type;drawTool();});
+  }else{
+    t.innerHTML='<div class="pick">'+[['blue','青軍'],['red','赤軍'],['none','消す']].map(([z,l])=>'<button class="'+(z===zoneBrush?(z==='none'?'':'b-'+z)+' on':'ghost')+'" data-z="'+z+'">'+l+'</button>').join('')+'</div>'+
+      '<p class="hint" style="margin-top:.5rem">塗ったマスが、ゲームの編成画面でその軍の部隊を動かせる範囲になります。部隊の初期配置はこの範囲の外にも置けます。</p>'+
+      '<div class="row"><button class="ghost" id="bZoneReset"'+(cur().zones?'':' disabled')+'>既定（両端の3列）に戻す</button></div>';
+    t.querySelectorAll('[data-z]').forEach(b=>b.onclick=()=>{zoneBrush=b.dataset.z;drawTool();});
+    document.getElementById('bZoneReset').onclick=()=>{if(!editable())return;delete cur().zones;save(false);drawAll();drawTool();};
+  }
+}
+function drawUnitBox(){
+  const box=document.getElementById('unitBox'),u=mode==='units'?selUnit():null;
+  box.hidden=!u;if(!u)return;
+  const U=cfg.units[u.type];
+  box.innerHTML='<h2>'+SIDE_NAME[u.side]+U.name+'</h2>'+
+    '<div class="row"><label class="chk">兵数 <input type="number" min="1" step="1" id="iMen" value="'+(u.men||U.men)+'"> 人</label></div>'+
+    '<div class="row"><button class="ghost" id="bRotL">↺ 左へ</button><button class="ghost" id="bRotR">↻ 右へ</button><button class="ghost" id="bDelU">削除</button></div>';
+  const im=document.getElementById('iMen');
+  im.onchange=()=>{if(!editable())return;const v=Math.round(parseFloat(im.value));if(v>0){u.men=v;save(true);drawUnits();drawTool();}else im.value=u.men||U.men;};
+  im.onkeydown=e=>{if(e.key==='Enter')im.blur();};
+  document.getElementById('bRotL').onclick=()=>rotate(-1);
+  document.getElementById('bRotR').onclick=()=>rotate(1);
+  document.getElementById('bDelU').onclick=removeSel;
+}
+function rotate(dl){const u=selUnit();if(!u||!editable())return;u.f=(u.f+dl+6)%6;save(true);drawUnits();}
+function removeSel(){const u=selUnit();if(!u||!editable())return;const m=cur();m.units=m.units.filter(x=>x!==u);selKey=null;save(true);drawUnits();drawUnitBox();drawTool();}
+function drawList(){
+  document.getElementById('maps').innerHTML=db.maps.map(m=>'<li><button class="'+(m.id===editId?'':'ghost')+'" data-id="'+m.id+'"><span>'+esc(m.name)+'</span><span class="tag">'+
+    [m.builtin?'組み込み':'',m.id===db.current?'ゲームで使用中':''].filter(Boolean).join('・')+'</span></button></li>').join('');
+  document.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>{editId=b.dataset.id;selKey=null;refresh();});
+  const m=cur();
+  document.getElementById('bRename').disabled=document.getElementById('bDel').disabled=!!m.builtin;
+  document.getElementById('wrap').classList.toggle('readonly',!!m.builtin);
+}
+function refresh(){drawAll();drawList();drawTool();setMsg(cur().builtin?'組み込みのマップは編集できません。「複製」してから編集してください':'');}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{mode=b.dataset.mode;selKey=null;drawTool();drawUnits();drawUnitBox();});
+
+/* ---- 盤面の操作 ---- */
+function paintAt(k){
+  if(!k||!editable())return;
+  const m=cur(),{col,row}=crOf(k),ck=col+','+row;
+  if(mode==='terrain'){
+    if((m.terrain[ck]||'plain')===brush)return;
+    if(brush==='plain')delete m.terrain[ck];else m.terrain[ck]=brush;
+    save(false);drawBase();drawUnits();
+  }else if(mode==='zones'){
+    if(!m.zones)m.zones=defaultZones();
+    if((m.zones[ck]||'none')===zoneBrush)return;
+    if(zoneBrush==='none')delete m.zones[ck];else m.zones[ck]=zoneBrush;
+    save(false);useMap(m);drawGrid();drawTool();
+  }
+}
+const keyAt=e=>{const el=document.elementFromPoint(e.clientX,e.clientY);return el&&el.closest?el.closest('[data-key]')?.dataset.key:null;};
+svg.addEventListener('pointerdown',e=>{
+  const k=e.target.closest('[data-key]')?.dataset.key;if(!k)return;
+  svg.setPointerCapture(e.pointerId);
+  if(mode!=='units'){painting=true;paintAt(k);return;}
+  const u=unitAtKey(k);
+  if(u){selKey=k;drag={from:k,over:k};drawUnits();drawUnitBox();return;}
+  if(!editable())return;
+  if(cavOnMountain(utype,k)){setMsg('騎兵は山に置けません');return;}
+  const {col,row}=crOf(k);
+  cur().units.push({side,type:utype,col,row,f:side==='blue'?0:3});
+  selKey=k;save(true);drawUnits();drawUnitBox();drawTool();
+});
+svg.addEventListener('pointermove',e=>{
+  if(painting)paintAt(keyAt(e));
+  else if(drag){const k=keyAt(e);if(k&&k!==drag.over){drag.over=k;drawGrid();}}
+});
+function endPointer(){
+  painting=false;
+  if(drag){
+    const {from,over}=drag,u=unitAtKey(from);drag=null;
+    if(u&&over&&over!==from&&!unitAtKey(over)&&editable()){
+      if(cavOnMountain(u.type,over))setMsg('騎兵は山に置けません');
+      else{const {col,row}=crOf(over);u.col=col;u.row=row;selKey=over;save(true);}
+    }
+    drawGrid();drawUnits();drawUnitBox();
+  }
+}
+['pointerup','pointercancel'].forEach(t=>svg.addEventListener(t,endPointer));
+document.addEventListener('keydown',e=>{
+  if(mode!=='units'||/INPUT|TEXTAREA/.test(e.target.tagName))return;
+  if(e.key==='q'||e.key==='Q')rotate(-1);
+  else if(e.key==='e'||e.key==='E')rotate(1);
+  else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();removeSel();}
+  else if(e.key==='Escape'){selKey=null;drawUnits();drawUnitBox();}
+});
+
+/* ---- マップの管理 ---- */
+const newId=()=>'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+function addMap(src){const m=cleanMap({...src,id:newId()});db.maps.push(m);editId=m.id;selKey=null;saveMaps(db);refresh();return m;}
+const STD=BUILTIN_MAPS[0];
+document.getElementById('bNew').onclick=()=>{const n=prompt('新しいマップの名前（部隊は標準の布陣から始まります）','新しいマップ');if(n!==null)addMap({name:n.trim()||'新しいマップ',terrain:{},units:JSON.parse(JSON.stringify(STD.units))});};
+document.getElementById('bDup').onclick=()=>{const m=cur();addMap({...JSON.parse(JSON.stringify(m)),name:m.name+'のコピー'});setMsg('複製しました');};
+document.getElementById('bRename').onclick=()=>{const m=cur();if(m.builtin)return;const n=prompt('マップの名前',m.name);if(n!==null&&n.trim()){m.name=n.trim();saveMaps(db);drawList();}};
+document.getElementById('bDel').onclick=()=>{
+  const m=cur();if(m.builtin||!confirm('「'+m.name+'」を削除しますか？'))return;
+  db.maps=db.maps.filter(x=>x!==m);if(db.current===m.id)db.current='standard';editId=db.current;selKey=null;saveMaps(db);refresh();setMsg('削除しました');
+};
+document.getElementById('bUse').onclick=()=>{
+  clearTimeout(saveTimer);db.current=editId;saveMaps(db);drawList();
+  const g=window.opener&&!window.opener.closed?window.opener:null;
+  if(g)g.postMessage({type:MAP_MSG},'*');
+  setMsg('「'+cur().name+'」をゲームで使います（戦闘中なら次の戦闘から）');
+};
+document.getElementById('bExport').onclick=()=>{const m=cur(),o={name:m.name,terrain:m.terrain,units:m.units};if(m.zones)o.zones=m.zones;document.getElementById('io').value=JSON.stringify(o);};
+document.getElementById('bCopy').onclick=async()=>{const ta=document.getElementById('io');try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}setMsg('コピーしました');};
+document.getElementById('bImport').onclick=()=>{
+  try{const o=JSON.parse(document.getElementById('io').value);if(!o||typeof o!=='object'||typeof o.terrain!=='object')throw 0;addMap({...o,name:o.name||'読み込んだマップ'});setMsg('読み込みました');}
+  catch(e){setMsg('読み込めませんでした。書き出した内容をそのまま貼り付けてください');}
+};
+// ほかのタブでマップが選ばれたら一覧を更新
+window.addEventListener('storage',e=>{if(e.key===MAPS_STORE){db=loadMaps();if(!db.maps.some(m=>m.id===editId))editId=db.current;refresh();}});
+
+refresh();
+</script>
+</body>
+</html>
