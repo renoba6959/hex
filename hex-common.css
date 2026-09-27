@@ -1,4 +1,4 @@
-/* 向きの兵棋盤：ゲーム画面と数値調整で共通の色・部品 */
+/* 朧 OBORO：ゲーム画面・数値調整・マップ編集で共通の色・部品 */
 :root{
   --paper:#D6DBCB; --map:#E3E7D9; --grid:#A2AB95; --ink:#1E2922; --muted:#58665B;
   --blue:#2B4C7E; --red:#9A2A34; --unit-text:#FFFFFF;
@@ -47,3 +47,5 @@ input[type=number]{width:4.4rem;font-family:var(--sans);font-size:.88rem;padding
 details.box>summary{font-family:var(--serif);font-weight:800;cursor:pointer}
 select,input[type=text]{font-family:var(--sans);font-size:.88rem;padding:.25rem .4rem;background:var(--map);color:var(--ink);border:1px solid var(--line);border-radius:3px}
 select:focus-visible,input[type=text]:focus-visible,textarea:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+h1 .en{font-family:var(--sans);font-weight:700;font-size:.5em;letter-spacing:.35em;color:var(--muted);margin-left:.7em;vertical-align:.2em}
+h1 .sub{font-family:var(--serif);font-weight:600;font-size:.42em;letter-spacing:.12em;color:var(--muted);margin-left:.9em;padding-left:.9em;border-left:1px solid var(--line);vertical-align:.25em}

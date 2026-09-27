@@ -1,4 +1,4 @@
-/* 向きの兵棋盤：数値の既定値と保存（ゲーム画面と数値調整タブで共有） */
+/* 朧 OBORO：数値の既定値と保存（ゲーム画面と数値調整タブで共有） */
 const DEFAULTS = {
   units:{
     spear:{name:'槍兵',ch:'槍',hp:10,men:10,atk:10,def:12,mp:4,rmin:1,rmax:1},
