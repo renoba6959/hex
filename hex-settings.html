@@ -25,12 +25,11 @@ textarea{width:100%;min-height:9rem;font-family:ui-monospace,Menlo,monospace;fon
 <body>
 <header>
   <h1>数値調整</h1>
-  <p>値を変えて「ゲームに反映」を押すと、開いているゲーム画面にすぐ反映されます。<span class="legend"></span>は初期設定から変えた欄です。</p>
+  <p>値を変えて「ゲームに反映」を押すと、開いているゲーム画面にすぐ反映されます。<span class="legend"></span>はまだ反映していない変更がある欄です。</p>
 </header>
 <div class="bar"><div class="bar-in">
   <button id="bApply">ゲームに反映</button>
   <button class="ghost" id="bRevert" title="まだ反映していない入力を取り消し、最後にゲームへ反映した値に戻します">入力を取り消す</button>
-  <button class="ghost" id="bDefault" title="ゲームにもともと入っている数値を入力欄に入れます。「ゲームに反映」で確定します">初期設定に戻す</button>
   <button class="ghost" id="bExport">書き出し</button>
   <span class="status" id="status" role="status"></span>
 </div></div>
@@ -50,8 +49,8 @@ textarea{width:100%;min-height:9rem;font-family:ui-monospace,Menlo,monospace;fon
   </div>
   <div class="set-grid" id="groups"></div>
   <div class="box" id="exportBox" hidden>
-    <h2>書き出し（初期設定から変えた値）</h2>
-    <p class="hint">この内容をコピーして Claude に渡すと、ゲームの初期設定として組み込めます。</p>
+    <h2>書き出し（ゲームのコードに入っている数値から変えた値）</h2>
+    <p class="hint">この内容をコピーして Claude に渡すと、ゲームのコードの数値として組み込めます。</p>
     <textarea id="exportText" readonly></textarea>
     <div class="row"><button id="bCopy">コピー</button></div>
   </div>
@@ -99,7 +98,7 @@ function readInputs(){
   return cfgFrom(c);
 }
 function refresh(){
-  document.querySelectorAll('input[data-path]').forEach(i=>i.classList.toggle('chg',parseFloat(i.value)!==getP(DEFAULTS,i.dataset.path)));
+  document.querySelectorAll('input[data-path]').forEach(i=>i.classList.toggle('chg',parseFloat(i.value)!==getP(saved,i.dataset.path)));
   const dirty=JSON.stringify(readInputs())!==JSON.stringify(saved);
   const st=document.getElementById('status');
   if(dirty){st.textContent='まだ反映していない変更があります';st.className='status dirty';}
@@ -108,7 +107,7 @@ function refresh(){
 }
 function setMsg(t){const st=document.getElementById('status');st.dataset.msg=t;refresh();}
 
-// 初期設定から変わった値だけを取り出す
+// ゲームのコードに入っている数値（DEFAULTS）から変わった値だけを取り出す
 function diff(o,d){
   const out={};
   for(const k in o){
@@ -127,10 +126,9 @@ document.getElementById('bApply').onclick=()=>{
   setMsg(t+' に反映しました'+(g?'':'（ゲーム画面を開き直したときにも反映されます）'));
 };
 document.getElementById('bRevert').onclick=()=>{cfg=clone(saved);build();setMsg('入力を取り消し、最後に反映した値に戻しました');};
-document.getElementById('bDefault').onclick=()=>{cfg=clone(DEFAULTS);build();setMsg('初期設定の値を入れました。「ゲームに反映」を押すと確定します');};
 document.getElementById('bExport').onclick=()=>{
   const d=diff(readInputs(),DEFAULTS);
-  document.getElementById('exportText').value=Object.keys(d).length?JSON.stringify(d,null,2):'（初期設定から変えた値はありません）';
+  document.getElementById('exportText').value=Object.keys(d).length?JSON.stringify(d,null,2):'（コードの数値から変えた値はありません）';
   const box=document.getElementById('exportBox');box.hidden=false;box.scrollIntoView({behavior:'smooth',block:'start'});
 };
 document.getElementById('bCopy').onclick=async()=>{

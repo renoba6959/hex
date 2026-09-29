@@ -138,7 +138,7 @@ function riverPaths(){
   });
   return out;
 }
-// 拠点の仮の記号（本陣＝軍の色の旗、村＝家、陣地＝土塁と幟、砦＝中央は櫓・外周は石垣、柵＝杭の並び）。hp は柵・砦の耐久の割合、building は工事中（薄く描く）
+// 拠点の仮の記号（本陣＝軍の色の旗、村＝家、陣地＝土塁と幟、柵＝杭の並び。砦はタイルで描くので耐久の棒だけ）。hp は柵・砦の耐久の割合、building は工事中（薄く描く）
 function featureSVG(f,c,hp,building){
   let h='<g class="feat" transform="translate('+c.x.toFixed(1)+','+c.y.toFixed(1)+')"'+(building?' opacity=".45"':'')+'>';
   if(f.type==='honjin'){
@@ -154,16 +154,6 @@ function featureSVG(f,c,hp,building){
     h+='<path d="M-26,12 Q-26,-2 -12,-4 L12,-4 Q26,-2 26,12 Z" fill="#9C7A4E" stroke="#4A3824" stroke-width="1.1"/><path d="M-20,8 Q0,2 20,8" stroke="#6E5536" stroke-width="1" fill="none"/>'+
       '<line x1="-16" y1="-3" x2="-16" y2="-24" stroke="#3E2E1C" stroke-width="1.5"/><rect x="-16" y="-24" width="7" height="12" fill="#C9B27A" stroke="#3E2E1C" stroke-width=".8"/>'+
       '<line x1="17" y1="-3" x2="17" y2="-24" stroke="#3E2E1C" stroke-width="1.5"/><rect x="17" y="-24" width="7" height="12" fill="#C9B27A" stroke="#3E2E1C" stroke-width=".8"/>';
-  }else if(f.type==='fort'&&f.part==='core'){
-    // 砦の中央：石垣の上の櫓
-    h+='<path d="M-24,12 L-24,0 L24,0 L24,12 Z" fill="#A9A395" stroke="#3A3730" stroke-width="1.1"/><path d="M-24,6 L24,6 M-12,12 L-12,6 M0,6 L0,0 M12,12 L12,6" stroke="#6E685C" stroke-width=".8" fill="none"/>'+
-      '<path d="M-11,0 L-11,-20 L11,-20 L11,0 Z" fill="#E6E0D0" stroke="#3A3730" stroke-width="1"/><path d="M-16,-19 L0,-31 L16,-19 Z" fill="#4A3A2E" stroke="#3A3730" stroke-width="1"/>'+
-      '<rect x="-4" y="-14" width="8" height="6" fill="#3A3730"/>';
-  }else if(f.type==='fort'){
-    // 砦の外周：胸壁つきの石垣
-    h+='<path d="M-26,12 L-26,-2 L-22,-2 L-22,-5 L-18,-5 L-18,-2 L-14,-2 L-14,-5 L-10,-5 L-10,-2 L10,-2 L10,-5 L14,-5 L14,-2 L18,-2 L18,-5 L22,-5 L22,-2 L26,-2 L26,12 Z" fill="#A9A395" stroke="#3A3730" stroke-width="1.1"/>'+
-      '<path d="M-26,5 L26,5 M-13,12 L-13,5 M0,5 L0,-2 M13,12 L13,5" stroke="#6E685C" stroke-width=".8" fill="none"/>'+
-      '';
   }else if(f.type==='fence'){
     h+='<line x1="-25" y1="9" x2="25" y2="9" stroke="#4A3824" stroke-width="2.2"/><line x1="-25" y1="3" x2="25" y2="3" stroke="#4A3824" stroke-width="2.2"/>';
     for(let x=-24;x<=24;x+=6)h+='<path d="M'+(x-1.6)+',13 L'+(x-1.6)+',-3 L'+x+',-6 L'+(x+1.6)+',-3 L'+(x+1.6)+',13 Z" fill="#A67C4A" stroke="#3E2E1C" stroke-width=".8"/>';
@@ -171,11 +161,22 @@ function featureSVG(f,c,hp,building){
   if(hp!=null&&hp<1)h+='<rect x="-14" y="17" width="28" height="3" fill="#6B5A44" opacity="1"/><rect x="-14" y="17" height="3" width="'+(28*hp).toFixed(1)+'" fill="#E8C27A"/>';
   return h+'</g>';
 }
+// 砦のタイル：中央は fort-core、外周は中央から見た方向（DIRS の番号）の fort-ring-0〜5
+function fortTile(c,f){
+  if(f.part==='core')return 'fort-core';
+  const [col,row]=f.fid.split(',').map(Number),o=fromCR(col,row);
+  const d=DIRS.findIndex(([dq,dr])=>o.q+dq===c.q&&o.r+dr===c.r);
+  return d<0?null:'fort-ring-'+d;
+}
 // 地形タイル・川・拠点（ゲーム画面・マップ編集で共通の下地）。st＝{hp:{キー→{hp,done}},max:{fence,jinchi,fort}} を渡すと、柵・陣地・砦を耐久に応じて描く
 function boardSVG(st){
   let h='<g>';
   const tw=(TILE.src*IMG_S).toFixed(1);
-  cells.forEach(c=>{h+='<image class="tile" href="tiles/'+tileOf(c)+'.png" x="'+(c.x-TILE.cx*IMG_S).toFixed(1)+'" y="'+(c.y-TILE.cy*IMG_S).toFixed(1)+'" width="'+tw+'" height="'+tw+'"/>';});
+  cells.forEach(c=>{
+    let t=tileOf(c);const f=featOf(c);
+    if(f&&f.type==='fort'){const s=st&&st.hp[key(c.q,c.r)];if(!st||(s&&s.hp>0))t=fortTile(c,f)||t;} // 壊れた砦のマスは地形のタイルに戻す
+    h+='<image class="tile" href="tiles/'+t+'.png" x="'+(c.x-TILE.cx*IMG_S).toFixed(1)+'" y="'+(c.y-TILE.cy*IMG_S).toFixed(1)+'" width="'+tw+'" height="'+tw+'"/>';
+  });
   h+='</g><g>';
   riverPaths().forEach(d=>{h+='<path class="rv rv-bank" d="'+d+'" stroke-width="'+(S*.36).toFixed(1)+'"/><path class="rv rv-water" d="'+d+'" stroke-width="'+(S*.24).toFixed(1)+'"/><path class="rv rv-shine" d="'+d+'" stroke-width="'+(S*.1).toFixed(1)+'"/>';});
   h+='</g><g style="pointer-events:none">';

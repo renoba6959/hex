@@ -50,7 +50,6 @@ dt{color:var(--muted)} dd{margin:0}
 <body>
 <header>
   <h1>朧<span class="en">OBORO</span><span class="sub">Hex Tactics</span></h1>
-  <p>槍・騎・弓の試作盤です。部隊と地形は「マップ編集」、数値は「数値調整」（どちらも別のタブ）で作ります。</p>
 </header>
 
 <main class="layout">
@@ -59,10 +58,6 @@ dt{color:var(--muted)} dd{margin:0}
     <div class="box" id="turnBox"></div>
     <div class="box" id="unitBox"></div>
     <div class="box"><h2>戦闘記録</h2><ol id="log"></ol></div>
-    <details class="box">
-      <summary>操作説明</summary>
-      <p class="hint" style="margin-top:.4rem">ユニットを選ぶと、移動できるマスに消費移動力、攻撃できる敵に予想される損害の人数が出ます（「反」は反撃で失う人数）。兵数が多いほど相手に与える損害も大きくなります。前方から攻撃すると反撃を受けます。薄い色の範囲は攻撃可能範囲です。<br>地形の効果はユニットの情報欄に出ます。<br>本陣に敵が入ると負けです。柵は騎兵を止めます。柵や砦は、中に部隊がいても攻撃して壊せます（中の部隊か拠点かを選びます）。槍兵は柵と陣地を作れます。陣地や砦（7マス、中央が特に堅い）は中の部隊の防御を上げます。<br>キー操作：Q／E 旋回、H 隠蔽、B 柵を作る・F 陣地を築く（槍兵）、M 行軍の切り替え、Z 取り消し、Enter ターン終了、Esc 選択解除</p>
-    </details>
   </aside>
 </main>
 
@@ -597,16 +592,16 @@ function featLabel(p){
 function renderPanel(sel,mine,v){
   const tb=document.getElementById('turnBox'),ub=document.getElementById('unitBox');
   if(state.phase==='setup'){
-    tb.innerHTML='<div class="turn">配置</div><p class="hint" style="margin-top:.4rem">'+(aiRed?'青軍':'各軍')+'の部隊を選ぶと、配置範囲の黄色のマスへ動かせます。↺↻（Q／E）で向きを変えられます。伏せるのはゲーム中の「隠蔽」で、部隊の数や兵数はマップ編集で決めます。</p>'+
+    tb.innerHTML='<div class="turn">配置</div><p class="hint" style="margin-top:.4rem">黄色のマスへ動かせます（Q／E で向き）</p>'+
       '<div class="row"><label class="chk">マップ <select id="selMap">'+loadMaps().maps.map(m=>'<option value="'+m.id+'"'+(m.id===state.mapId?' selected':'')+'>'+esc(m.name)+'</option>').join('')+'</select></label><button class="ghost" id="bMaps">マップ編集</button></div>'+
-      '<div class="row"><button id="bStart"'+(canStart()?'':' disabled')+'>戦闘開始</button><button class="ghost" id="bFormReset">マップの初期配置に戻す</button><button class="ghost" id="bCfg2">数値調整</button></div>';
+      '<div class="row"><button id="bStart"'+(canStart()?'':' disabled')+'>戦闘開始</button><button class="ghost" id="bFormReset">マップの初期配置に戻す</button><button class="ghost" id="bCfg2">数値調整</button><button class="ghost" id="bMan2">説明書</button></div>';
     const sum=side=>{const us=state.units.filter(u=>u.side===side);return '<dt>'+SIDE_NAME[side]+'</dt><dd>'+(us.length?us.length+'部隊・'+sideMen(side)+'人':'部隊なし')+'</dd>';};
     let h='<dl style="margin-top:0">'+sum('blue')+sum('red')+'</dl>';
     if(sel){
       const U=cfg.units[sel.type],ok=deployable(sel);
       h+='<div class="uname" style="margin-top:.6rem">'+uname(sel)+'</div><dl><dt>兵数</dt><dd>'+sel.men0+'人</dd><dt>地形</dt><dd>'+terLabel(sel)+'</dd>'+(featLabel(sel)?'<dt>拠点</dt><dd>'+featLabel(sel)+'</dd>':'')+'</dl>'+
         (ok?'<div class="row"><button class="ghost" id="bSL">↺ 左へ</button><button class="ghost" id="bSR">↻ 右へ</button></div>'
-           :'<p class="hint" style="margin-top:.4rem">赤軍はAIに任せているので、マップのとおりに配置されます。</p>');
+           :'<p class="hint" style="margin-top:.4rem">赤軍（AI）はマップのとおりに配置されます。</p>');
     }else h+='<p class="hint" style="margin-top:.4rem">部隊を選んでください。</p>';
     ub.innerHTML=h;
     const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
@@ -614,6 +609,7 @@ function renderPanel(sel,mine,v){
     document.getElementById('bStart').onclick=startBattle;
     document.getElementById('bFormReset').onclick=resetFormation;
     document.getElementById('bCfg2').onclick=openSettings;
+    document.getElementById('bMan2').onclick=openManual;
     document.getElementById('bMaps').onclick=openMaps;
     document.getElementById('selMap').onchange=e=>selectMap(e.target.value);
     renderLog(null);
@@ -638,21 +634,20 @@ function renderPanel(sel,mine,v){
       '<p class="hint" style="margin-top:.2rem">マップ：'+esc(state.mapName)+'</p>'+
       (busy?'<p class="hint" style="margin-top:.4rem">赤軍が行動中です…</p>':'')+
       '<div class="row"><button id="bEnd"'+(busy?' disabled':'')+'>ターン終了</button><button class="ghost" id="bUndo"'+(state.history.length&&!busy?'':' disabled')+'>取り消し</button><button class="ghost" id="bNew">最初から</button></div>'+
-      '<div class="row"><button class="ghost" id="bEdit"'+(busy?' disabled':'')+'>配置からやり直す</button><button class="ghost" id="bMaps2">マップ編集</button><button class="ghost" id="bCfg">数値調整</button></div>'+
+      '<div class="row"><button class="ghost" id="bEdit"'+(busy?' disabled':'')+'>配置からやり直す</button><button class="ghost" id="bMaps2">マップ編集</button><button class="ghost" id="bCfg">数値調整</button><button class="ghost" id="bMan">説明書</button></div>'+
       '<div class="row"><label class="chk"><input type="checkbox" id="cAi"'+(aiRed?' checked':'')+'> 赤軍をAIに任せる</label><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label></div>';
   }
   const ch=state.choice&&sel&&mine?state.choice:null,cu=ch&&seenAt(ch.q,ch.r);
   if(ch&&cu&&canAttack(sel,cu)&&canHitStruct(sel,ch)){
     const r=computeAttack(sel,cu,surprise(sel)),nm=structName(ch);
     ub.innerHTML='<div class="uname">攻撃の対象</div><p class="hint" style="margin-top:.3rem">'+uname(cu)+'は'+nm+'にこもっています。どちらを攻撃しますか？</p>'+
-      '<div class="row"><button id="bChU">'+uname(cu)+'を攻撃（−'+lossOf(cu,r.dmg)+'人・'+nm+' −'+spillDamage(sel)+'）</button><button id="bChS">'+nm+'を攻撃（'+nm+' −'+structDamage(sel)+'）</button><button class="ghost" id="bChX">やめる（Esc）</button></div>'+
-      '<p class="hint" style="margin-top:.4rem">部隊を攻撃しても'+nm+'に少し損傷が入ります。'+nm+'を攻撃すると大きく壊せますが、中の部隊が正面に捉えていれば反撃を受けます。</p>';
+      '<div class="row"><button id="bChU">'+uname(cu)+'を攻撃（−'+lossOf(cu,r.dmg)+'人・'+nm+' −'+spillDamage(sel)+'）</button><button id="bChS">'+nm+'を攻撃（'+nm+' −'+structDamage(sel)+'）</button><button class="ghost" id="bChX">やめる（Esc）</button></div>';
     const go=f=>()=>{state.choice=null;f();};
     document.getElementById('bChU').onclick=go(()=>doAttack(sel,cu));
     document.getElementById('bChS').onclick=go(()=>attackStruct(sel,ch));
     document.getElementById('bChX').onclick=go(render);
   }
-  else if(!sel){ub.innerHTML='<p class="hint">ユニットを選んでください。敵ユニットも選ぶと状態を確認できます。</p>';}
+  else if(!sel){ub.innerHTML='<p class="hint">部隊を選んでください。</p>';}
   else{
     const U=cfg.units[sel.type],contact=inContact(sel),tc=contact?cfg.contactTurnCost:cfg.turnCost;
     const canT=mine&&sel.mp>=tc;
@@ -671,16 +666,13 @@ function renderPanel(sel,mine,v){
           const jp=workSpot(sel,'jinchi'),jt=jp?workType(jp,'jinchi'):'jinchi';
           const prog=(t,p)=>{const x=p&&struct[key(p.q,p.r)];return x&&featOf(p)?.type===t?' '+x.hp+'／'+maxOf(t):'';},r='+'+workRate(sel);
           return '<div class="row"><button id="bFence"'+(canWork(sel,'fence')?'':' disabled')+'>'+DIR_NAME[sel.f]+'に柵'+prog('fence',workSpot(sel,'fence'))+'（'+r+'・B）</button>'+
-            '<button id="bFort"'+(canWork(sel,'jinchi')?'':' disabled')+'>'+(jt==='fort'?'砦を修理':'ここに陣地')+prog(jt,jp)+'（'+r+'・F）</button></div>'+
-            '<p class="hint" style="margin-top:.4rem">動く前なら、兵数に応じて工事を進められます（1人あたり'+cfg.buildRate+'、この部隊は'+r+'。小数点以下は切り捨て）。柵は向いている方向の隣のマス、陣地は今いるマスで、どちらも平地・森・丘のみ。砦のマスにいれば砦を修理できます。作りかけでも、たまった耐久の割合だけ防御が上がります。工事をするとこの部隊の行動は終わり、次の手番まで無防備になります（攻撃されると奇襲の倍率を受け、反撃できず、隊列が乱れる）。</p>';
+            '<button id="bFort"'+(canWork(sel,'jinchi')?'':' disabled')+'>'+(jt==='fort'?'砦を修理':'ここに陣地')+prog(jt,jp)+'（'+r+'・F）</button></div>';
         })():'')+
-        (sel.hidden?'<div class="row"><span class="hint">行軍（M）</span><button id="bMH" class="'+(state.march==='normal'?'ghost':'on')+'">隠蔽行軍（+'+cfg.hideMove+'/マス）</button><button id="bMN" class="'+(state.march==='normal'?'on':'ghost')+'">通常行軍</button></div>'+
-          '<p class="hint" style="margin-top:.4rem">'+(state.march==='normal'?'通常行軍で動くと姿を現します。':'森・丘・山の中なら隠れたまま動けます。')+
-          (sel.sprung?'奇襲は済んでいます。もう一度「隠蔽」すると、次の攻撃が再び奇襲になります。':'攻撃すると奇襲になります'+(sel.type==='archer'?'（2マス以上離れて射れば隠れたまま）':'')+'。')+'</p>':'')+
-        (onCover(sel)&&!sel.pending&&(!sel.hidden||sel.sprung)?'<div class="row"><button id="bHide"'+(canHide(sel)?'':' disabled')+'>隠蔽する（H）</button></div><p class="hint" style="margin-top:.4rem">移動力が'+cfg.hideCost+'以上残っていて敵と接していなければ、手番の終わりに隠れます。この部隊の行動はそこで終わります。</p>':''):'');
+        (sel.hidden?'<div class="row"><span class="hint">行軍（M）</span><button id="bMH" class="'+(state.march==='normal'?'ghost':'on')+'">隠蔽行軍（+'+cfg.hideMove+'/マス）</button><button id="bMN" class="'+(state.march==='normal'?'on':'ghost')+'">通常行軍</button></div>':'')+
+        (onCover(sel)&&!sel.pending&&(!sel.hidden||sel.sprung)?'<div class="row"><button id="bHide"'+(canHide(sel)?'':' disabled')+'>隠蔽する（H）</button></div>':''):'');
   }
   const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
-  on('bEnd',endTurn);on('bUndo',undo);on('bNew',()=>newGame(false));on('bEdit',editFormation);on('bCfg',openSettings);on('bMaps2',openMaps);
+  on('bEnd',endTurn);on('bUndo',undo);on('bNew',()=>newGame(false));on('bEdit',editFormation);on('bCfg',openSettings);on('bMaps2',openMaps);on('bMan',openManual);
   on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));
   on('bHide',()=>hideUnit(sel));on('bFence',()=>work(sel,'fence'));on('bFort',()=>work(sel,'jinchi'));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
   const ai=document.getElementById('cAi');if(ai)ai.onchange=()=>{aiRed=ai.checked;if(aiRed&&state.side==='red'&&state.phase==='battle')runAI();};
@@ -748,6 +740,7 @@ function mapChanged(){
 }
 window.addEventListener('message',e=>{if(e.data&&e.data.type===MAP_MSG)mapChanged();});
 window.addEventListener('storage',e=>{if(e.key===MAPS_STORE)mapChanged();});
+function openManual(){const w=window.open('hex-manual.html','hex-manual');if(w)w.focus();}
 function openSettings(){const w=window.open('hex-settings.html','hex-settings');if(w)w.focus();}
 
 newGame();

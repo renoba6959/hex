@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>説明書｜朧 OBORO</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="hex-common.css">
+<style>
+.doc{display:grid;grid-template-columns:200px minmax(0,1fr);gap:2rem;max-width:1100px;margin:0 auto;padding:1rem 1.25rem 3rem}
+@media (max-width:860px){.doc{grid-template-columns:minmax(0,1fr)}.toc{position:static!important}}
+.toc{position:sticky;top:1rem;align-self:start;font-size:.9rem}
+.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.3rem}
+.toc a{color:var(--muted);text-decoration:none}.toc a:hover{color:var(--ink)}
+article{max-width:46rem}
+article h2{font-family:var(--serif);font-weight:800;font-size:1.3rem;letter-spacing:.04em;margin:2.2rem 0 .6rem;padding-left:.6rem;border-left:5px solid var(--blue);scroll-margin-top:1rem}
+article h2:first-child{margin-top:0}
+article h3{font-family:var(--serif);font-size:1.05rem;margin:1.4rem 0 .4rem}
+article p,article li{line-height:1.8}
+article ul{padding-left:1.2rem;margin:.4rem 0}
+article table{margin:.6rem 0;width:100%}
+article td,article th{padding:.35rem .5rem;vertical-align:top}
+kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:.05rem .4rem;background:var(--panel)}
+.note{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:.7rem .9rem;margin:.8rem 0;font-size:.92rem}
+.v{font-weight:700}
+</style>
+</head>
+<body>
+<header>
+  <h1>朧<span class="en">OBORO</span><span class="sub">説明書</span></h1>
+</header>
+<div class="doc">
+  <nav class="toc" aria-label="目次">
+    <ol>
+      <li><a href="#flow">ゲームの流れ</a></li>
+      <li><a href="#win">勝敗</a></li>
+      <li><a href="#units">部隊と兵数</a></li>
+      <li><a href="#move">向きと移動</a></li>
+      <li><a href="#attack">攻撃</a></li>
+      <li><a href="#terrain">地形</a></li>
+      <li><a href="#ambush">伏兵</a></li>
+      <li><a href="#bases">拠点</a></li>
+      <li><a href="#build">工事と破壊</a></li>
+      <li><a href="#keys">操作</a></li>
+      <li><a href="#tools">マップ編集と数値調整</a></li>
+      <li><a href="#design">数値の考え方</a></li>
+    </ol>
+  </nav>
+  <article>
+    <h2 id="flow">ゲームの流れ</h2>
+    <p>青軍と赤軍が交互に手番を行います。赤軍は AI に任せることも、人が操作することもできます。</p>
+    <ul>
+      <li><b>配置</b>：選んだマップの布陣から始まります。自軍の部隊は、配置範囲（黄色のマス）の中で位置と向きを変えられます。部隊の数や兵数はマップで決まっています。</li>
+      <li><b>戦闘</b>：自軍の手番では、部隊を選んで移動・旋回・攻撃などを行い、「ターン終了」で相手の手番に移ります。</li>
+      <li>「配置からやり直す」で配置に戻れます。戦闘の途中なら、その戦闘は最初からになります。</li>
+    </ul>
+
+    <h2 id="win">勝敗</h2>
+    <ul>
+      <li>敵の部隊を<b>全滅</b>させたら勝ちです。</li>
+      <li>敵の<b>本陣</b>のマスに自軍の部隊が入ったら、その時点で勝ちです。</li>
+      <li>本陣のない軍（遠征軍）は、全滅しない限り負けません。そのかわり本陣で回復できません。</li>
+    </ul>
+
+    <h2 id="units">部隊と兵数</h2>
+    <table id="unitTable"></table>
+    <p>部隊の強さは兵数で決まります。与える損害は<b>攻撃側の今の兵数に比例</b>するので、兵が減るほど弱くなります（ランチェスターの二乗則）。兵数の2倍の差は、戦う力では4倍の差になります。</p>
+    <p>部隊の耐久は「兵数 × 1人あたりのHP」で、損害を受けると兵数が減ります。</p>
+
+    <h2 id="move">向きと移動</h2>
+    <p>部隊は6方向のどれかを向いています。向きによって移動のしやすさと、攻撃の受け方が変わります。</p>
+    <table>
+      <tr><th>移動する方向</th><th>移動コスト</th></tr>
+      <tr><td>正面</td><td class="v" data-v="mvF"></td></tr>
+      <tr><td>斜め前</td><td class="v" data-v="mvFD"></td></tr>
+      <tr><td>斜め後ろ</td><td class="v" data-v="mvRD"></td></tr>
+      <tr><td>真後ろ</td><td class="v" data-v="mvR"></td></tr>
+    </table>
+    <ul>
+      <li>斜め前に動くと、その方向を向きます。</li>
+      <li>旋回（60度）は移動力 <span class="v" data-v="turnCost"></span>。敵と接しているときは <span class="v" data-v="contactTurnCost"></span> かかり、隊列が乱れます。</li>
+      <li>地形や拠点に入るときは、追加のコストがかかります（<a href="#terrain">地形</a>・<a href="#bases">拠点</a>）。</li>
+      <li><b>ZOC</b>：敵の正面側の隣のマスに入ると、その手番の移動は止まります。隠れている部隊は ZOC を持ちません。</li>
+    </ul>
+
+    <h2 id="attack">攻撃</h2>
+    <p>攻撃できるのは、部隊の正面から左右90°の範囲で、射程の中にいる敵です。攻撃は1手番に1回で、攻撃するとその手番は動けません。</p>
+    <h3>攻撃する方向</h3>
+    <table>
+      <tr><th>敵のどこを攻撃するか</th><th>損害の倍率</th></tr>
+      <tr><td>正面・斜め前</td><td class="v">×1</td></tr>
+      <tr><td>斜め後ろ</td><td class="v" data-v="side" data-x></td></tr>
+      <tr><td>真後ろ</td><td class="v" data-v="rear" data-x></td></tr>
+    </table>
+    <h3>反撃</h3>
+    <p>前方（正面・斜め前）から攻撃された部隊は、攻撃側が射程内にいれば反撃します。反撃は、攻撃を受けて減った兵数で、倍率 <span class="v" data-v="counter" data-x></span> をかけて計算します。横や背後からの攻撃には反撃できません。</p>
+    <h3>そのほか</h3>
+    <ul>
+      <li><b>兵種相性</b>：槍兵は騎兵に強く、騎兵は弓兵に強く、弓兵は槍兵に強めです。槍兵は正面から来る騎兵に対して、防御が <span class="v" data-v="spearFrontDef" data-x></span> になります。</li>
+      <li><b>隊列の乱れ</b>：乱れた部隊は、攻撃も防御も <span class="v" data-v="disorder" data-x></span> になります。自軍の手番のはじめに直ります。</li>
+      <li>盤面には、攻撃できる敵に予想の損害人数が出ます。「反」は反撃で失う人数です。</li>
+    </ul>
+
+    <h2 id="terrain">地形</h2>
+    <table id="terrainTable"></table>
+    <p>騎兵は山に入れず、森から攻撃すると力が落ちます（×<span data-v="cavForest"></span>）。川は隣り合う川マスどうしでつながった流れとして描かれます。</p>
+
+    <h2 id="ambush">伏兵</h2>
+    <h3>隠蔽</h3>
+    <ul>
+      <li>森・丘・山・村にいる部隊は「隠蔽」を選べます。移動力が <span class="v" data-v="hideCost"></span> 以上残っていて、見えている敵と接していないことが条件です。その部隊の行動はそこで終わり、手番の終わりに隠れます。</li>
+      <li>隠れた部隊は、相手の画面に表示されません。相手には、隠れた場所に「？」の印が残ります。</li>
+      <li><b>隠蔽行軍</b>：隠れたまま動けます。1マスごとに +<span data-v="hideMove"></span> かかり、森・丘・山・村から出ると見つかります。<b>通常行軍</b>を選ぶと、普通のコストで動けますが姿を現します。</li>
+    </ul>
+    <h3>奇襲</h3>
+    <ul>
+      <li>隠れた部隊の攻撃は奇襲になります。損害 <span class="v" data-v="ambush" data-x></span>、反撃なし、相手の隊列が乱れます。奇襲になるのは、隠れてから最初の1回だけです。</li>
+      <li>隠れた部隊の攻撃範囲に敵が入ると、「奇襲する／見送る」を選べます。奇襲された敵はその場で止まります。</li>
+      <li>隠れた部隊のマスに入ろうとすると遭遇します。相手の攻撃範囲の中からなら奇襲を受け、背後からなら奇襲なしで見つけます。</li>
+      <li><b>弓兵</b>は、2マス以上離れて射れば隠れたままでいられます。撃たれた側には、矢の来た方向だけが分かります。2発目以降は通常の射撃で、もう一度隠蔽すると再び奇襲できます。</li>
+    </ul>
+
+    <h2 id="bases">拠点</h2>
+    <table id="baseTable"></table>
+    <ul>
+      <li>柵・陣地・砦の防御は、耐久の割合に応じて効きます。作りかけや壊れかけでは弱くなります。</li>
+      <li><b>砦</b>は7マスで、中央と外周で防御が違います。耐久は1マスごとにあり、1面だけ崩すこともできます。壊れた砦のマスは建て直せません。</li>
+      <li><b>柵</b>は、完成してから騎兵を止めます（騎兵は入れず、中の部隊へ突撃もできません）。</li>
+      <li>本陣・村での回復は、敵と接していないとき、自軍の手番のはじめに最初の兵数に対する割合で行われます。</li>
+    </ul>
+    <h3>拠点への攻撃</h3>
+    <ul>
+      <li>柵・陣地・砦は、中に部隊がいても攻撃して壊せます。部隊と拠点のどちらも攻撃できるときは、どちらを攻撃するか選びます。</li>
+      <li><b>部隊を攻撃</b>：部隊に損害を与え、拠点にも <span data-v="structSpill" data-pct></span> の損傷が入ります。</li>
+      <li><b>拠点を攻撃</b>：拠点に全部の損傷が入りますが、中の部隊が正面に捉えていれば反撃を受けます。</li>
+      <li>自軍が作った柵や陣地は、自軍では攻撃できません。</li>
+    </ul>
+
+    <h2 id="build">工事と破壊</h2>
+    <ul>
+      <li>槍兵は、動く前なら工事ができます。<b>柵</b>は向いている方向の隣のマス、<b>陣地</b>は今いるマスに作ります。作れるのは平地・森・丘だけです。砦のマスにいれば、砦を修理できます。</li>
+      <li>1回の工事で積める耐久は「兵数 × <span class="v" data-v="buildRate"></span>」です。</li>
+      <li>1回の攻撃で壊せる耐久は「兵数 × <span class="v" data-v="demolishRate"></span> × 兵種の比」です（槍兵 <span data-v="fenceVs.spear"></span>、騎兵 <span data-v="fenceVs.cav"></span>、弓兵 <span data-v="fenceVs.archer"></span>）。</li>
+      <li>工事も破壊も、小数点以下は切り捨てです。1に満たない分は効きません。</li>
+      <li>工事をするとその部隊の行動は終わり、次の自軍の手番まで無防備になります。攻撃されると奇襲の倍率を受け、反撃できず、隊列が乱れます。</li>
+    </ul>
+    <p id="buildExample" class="note"></p>
+
+    <h2 id="keys">操作</h2>
+    <table>
+      <tr><td><kbd>クリック</kbd></td><td>部隊を選ぶ／隣のマスへ移動／敵や拠点を攻撃</td></tr>
+      <tr><td><kbd>Q</kbd> <kbd>E</kbd></td><td>左・右に旋回</td></tr>
+      <tr><td><kbd>H</kbd></td><td>隠蔽する</td></tr>
+      <tr><td><kbd>M</kbd></td><td>隠蔽行軍と通常行軍の切り替え</td></tr>
+      <tr><td><kbd>B</kbd></td><td>柵を作る（槍兵）</td></tr>
+      <tr><td><kbd>F</kbd></td><td>陣地を築く・砦を修理する（槍兵）</td></tr>
+      <tr><td><kbd>Z</kbd></td><td>取り消し（奇襲や遭遇など、相手に情報が伝わる出来事のあとは取り消せません）</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>ターン終了</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>選択の解除</td></tr>
+    </table>
+
+    <h2 id="tools">マップ編集と数値調整</h2>
+    <ul>
+      <li><b>マップ編集</b>：地形・拠点・部隊・配置範囲と、盤の大きさを決めます。「ゲームで使う」で、開いているゲーム画面に送られます。戦闘中なら次の戦闘から使われます。</li>
+      <li><b>数値調整</b>：兵種や倍率などの数値を変えます。「ゲームに反映」を押すと、開いているゲーム画面にすぐ反映されます。</li>
+      <li>赤軍を AI に任せているときは、画面は常に青軍から見たものになります。両軍とも人が操作する場合は、手番側から見た画面になります。</li>
+    </ul>
+
+    <h2 id="design">数値の考え方</h2>
+    <p>数値は、次の2つを基本にして決めています。</p>
+    <ul>
+      <li><b>ランチェスターの二乗則</b>：戦う力は兵数の二乗で効きます。</li>
+      <li><b>攻者三倍の法則</b>：攻める側は、守る側のおよそ3倍の兵力が必要だという経験則です。</li>
+    </ul>
+    <p>二乗則のもとでは、防御 ×D の拠点を落とすには √D 倍の兵力が要ります。陣地（×<span data-v="jinchiDef"></span>）、砦の外周（×<span data-v="fortRingDef"></span>）、砦の中央（×<span data-v="fortCoreDef"></span>）の順に、攻め落とすのに必要な兵力が増えます。</p>
+  </article>
+</div>
+<script src="hex-config.js"></script>
+<script>
+// 数値は数値調整の値を読み込んで表示する（調整してもずれない）
+const cfg=loadCfg(),get=p=>p.split('.').reduce((o,k)=>o[k],cfg);
+const pct=x=>Math.round(x*100)+'%';
+document.querySelectorAll('[data-v]').forEach(el=>{const v=get(el.dataset.v);el.textContent=el.hasAttribute('data-pct')?pct(v):(el.hasAttribute('data-x')?'×':'')+v;});
+const row=cells=>'<tr>'+cells.map(c=>'<td>'+c+'</td>').join('')+'</tr>',head=cells=>'<tr>'+cells.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
+document.getElementById('unitTable').innerHTML=head(['兵種','1人あたりのHP','攻撃','防御','移動力','射程','特徴'])+
+  [['spear','正面から来る騎兵に強い。柵・陣地を作れる。拠点を壊すのが得意'],['cav','移動力が高い。弓兵に強い。山と柵には入れない'],['archer','離れて射撃できる。隠れたまま射撃できる']]
+  .map(([t,d])=>{const U=cfg.units[t];return row([U.name,U.hp,U.atk,U.def,U.mp,U.rmin===U.rmax?U.rmin:U.rmin+'〜'+U.rmax,d]);}).join('');
+document.getElementById('terrainTable').innerHTML=head(['地形','入るときの追加コスト','防御','攻撃','隠れられる'])+
+  row(['平地',0,'×1','×1','－'])+TER_TYPES.map(t=>{const T=cfg.terrain[t];return row([TER_NAME[t],t==='mountain'?T.move+'（騎兵は入れない）':T.move,'×'+T.def,'×'+T.atk,t==='river'?'－':'○']);}).join('');
+document.getElementById('baseTable').innerHTML=head(['拠点','効果'])+
+  row(['本陣','自軍の防御 ×'+cfg.honjinDef+'、回復 '+pct(cfg.honjinHeal)+'。敵が入るとその軍の負け'])+
+  row(['村','防御 ×'+cfg.villageDef+'、回復 '+pct(cfg.villageHeal)+'、隠れられる'])+
+  row(['陣地（1マス）','防御 ×'+cfg.jinchiDef+'、耐久 '+cfg.jinchiHp+'、入るのに +'+cfg.fortMove+'。槍兵が築く'])+
+  row(['砦（7マス）','中央 ×'+cfg.fortCoreDef+'・外周 ×'+cfg.fortRingDef+'、耐久 1マス '+cfg.fortHp+'、入るのに +'+cfg.fortMove+'。マップに置く'])+
+  row(['柵','防御 ×'+cfg.fenceDef+'、耐久 '+cfg.fenceHp+'、入るのに '+cfg.fenceMove+'（騎兵は入れない）。槍兵が作る']);
+const b=n=>Math.floor(n*cfg.buildRate+1e-9),d=(n,t)=>Math.floor(n*cfg.demolishRate*cfg.fenceVs[t]+1e-9);
+document.getElementById('buildExample').innerHTML='例：1000人の槍兵なら、1回の工事で耐久 '+b(1000)+'（陣地 '+cfg.jinchiHp+' を '+Math.ceil(cfg.jinchiHp/Math.max(1,b(1000)))+'手番で完成）。'+
+  '2000人の槍兵なら1回の攻撃で '+d(2000,'spear')+'、2000人の弓兵なら '+d(2000,'archer')+' 壊せます（反撃や修理がなければ）。';
+</script>
+</body>
+</html>
