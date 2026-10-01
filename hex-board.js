@@ -63,7 +63,7 @@ function loadMaps(){
 }
 function saveMaps(db){try{localStorage.setItem(MAPS_STORE,JSON.stringify({current:db.current,maps:db.maps.filter(m=>!m.builtin)}));}catch(e){}}
 const isObj=o=>o&&typeof o==='object'&&!Array.isArray(o);
-const UNIT_TYPES=['spear','cav','archer'];
+const UNIT_TYPES=['spear','cav','archer','supply'];
 // 赤軍AIの作戦（マップごとに決められる。random＝戦闘ごとにランダムに選び、決着まで伏せる）
 const AI_STYLES={rush:'猛進',careful:'慎重',ambush:'伏兵',hold:'要地'};
 const AI_STYLE_DESC={rush:'隠れずに敵の本陣の占領を狙う。多少の損害は気にしない',careful:'危険を避け、不利な戦いはしない。隙を見せた敵を叩く',

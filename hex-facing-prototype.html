@@ -31,6 +31,8 @@ svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:mani
 .unit.hid .totsu,.mark .totsu{fill-opacity:.5;stroke-dasharray:3 2}
 .mark{pointer-events:none;opacity:.75}
 .lbl.taken{fill:var(--red);font-size:12px}
+.route{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:4 3;opacity:.6;pointer-events:none}
+.badge.food{fill:#B07A1A}.badge.food.out{fill:var(--red)}
 .fog{fill:#141A28;fill-opacity:.42;stroke:none}
 .badge{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--ink);paint-order:stroke;stroke:var(--map);stroke-width:3px}.badge.pend{opacity:.5}
 .shot{fill:var(--red);stroke:var(--map);stroke-width:1.5;pointer-events:none}
@@ -136,13 +138,14 @@ function startBattle(){
   const pick=aiPick==='map'?(findMap(loadMaps(),state.mapId).ai||'random'):aiPick,ks=Object.keys(AI_STYLES);
   state.aiStyle=pick==='random'?ks[Math.floor(Math.random()*ks.length)]:pick;state.aiSecret=pick==='random';
   log('戦闘開始　青軍'+sideMen('blue')+'人、赤軍'+sideMen('red')+'人','sys');
-  startSide('blue');log('第1ターン　青軍の手番','sys');render();
+  log('第1ターン　青軍の手番','sys');startSide('blue');render();beginSide('blue');
 }
 /* ---- 配置 ---- */
 const DEF_F={blue:0,red:3}; // 青は右、赤は左を向く
 function makeUnit(id,side,type,q,r,f,men){
   const men0=Math.max(1,Math.round(men||cfg.units[type].men));
   return {id,no:0,side,type,q,r,f:((f|0)%6+6)%6,men0,hp:men0*cfg.units[type].hp,mp:0,attacked:false,dis:false,
+    food:men0*cfg.foodTurns,cargo:type==='supply'?men0*cfg.supplyCap:0,order:null,supplied:true,starving:false, // 兵糧（人×ターン）、輜重の積み荷、往復の命令
     morale:100,hidden:false,pending:false,sprung:false,mark:null,shotFrom:null,worked:false,exposed:false}; // worked＝工事で手番を終えた（次の手番まで無防備）
   // hidden＝隠蔽中、pending＝手番の終わりに隠れる、sprung＝この隠蔽での奇襲は済んだ、mark＝敵が最後に見た位置、shotFrom＝矢を受けた方向
 }
@@ -163,7 +166,101 @@ function startSide(side){state.units.filter(u=>u.side===side).forEach(u=>{
     if(menOf(u)>before)log(uname(u)+'が'+(f.type==='village'?'村':'本陣')+'で'+(menOf(u)-before)+'人回復（'+menOf(u)+'人）','sys',u.side);
   }
 });
-  moraleTick(side);
+  supplyTick(side);moraleTick(side);
+}
+/* ---- 兵糧と補給 ---- */
+const foodMax=u=>menOf(u)*cfg.foodTurns,cargoMax=u=>u.men0*cfg.supplyCap;
+const foodTurnsOf=u=>menOf(u)?Math.floor((u.food??0)/menOf(u)+1e-9):0;
+const hqReady=side=>{const hq=honjinOf(side);return hq&&!state.taken[side]?hq:null;};
+// 手番のはじめ：本陣のそばの輜重は積み込む。積み荷が少ない（supplyReturn 未満）ときの積み込みはその手番を使い、
+// 少し減っただけなら継ぎ足すだけで動ける。そのあと本陣と輜重が周りの部隊へ兵糧を配る
+function supplyTick(side){
+  const us=state.units.filter(u=>u.side===side),hq=hqReady(side);
+  us.forEach(u=>{u.supplied=false;});
+  if(hq)us.filter(u=>u.type==='supply'&&dist(u,hq)<=1&&u.cargo<cargoMax(u)).forEach(u=>{
+    const big=u.cargo<cargoMax(u)*cfg.supplyReturn;u.cargo=cargoMax(u);if(u.order)u.order.phase='out';
+    if(big){u.mp=0;log(uname(u)+'が本陣で積み込み（'+u.cargo+'、この手番は動けない）','sys',u.side);}
+  });
+  const fill=(u,give)=>{const need=Math.max(0,foodMax(u)-u.food),g=Math.min(need,give);u.food+=g;u.supplied=true;return g;};
+  if(hq)us.filter(u=>dist(u,hq)<=cfg.honjinSupplyRange).forEach(u=>fill(u,Infinity));
+  // 輜重は、残りの少ない部隊から順に配る
+  us.filter(s=>s.type==='supply'&&s.cargo>0).forEach(s=>{
+    us.filter(u=>dist(u,s)<=cfg.supplyRange).sort((a,b)=>foodTurnsOf(a)-foodTurnsOf(b)).forEach(u=>{if(s.cargo>0)s.cargo-=fill(u,s.cargo);});
+  });
+}
+// 手番の終わり：今いる人数分を食べる。足りなければ兵糧切れで士気が下がる
+function eatTick(side){
+  state.units.filter(u=>u.side===side).forEach(u=>{
+    const eat=menOf(u);
+    if(u.food>=eat){u.food-=eat;u.starving=false;return;}
+    u.food=0;u.starving=true;shiftMorale(u,-cfg.hungerMorale);
+    log(uname(u)+'は兵糧が尽きた（士気−'+cfg.hungerMorale+'、士気'+moraleOf(u)+'）','sys',privOf(u));
+  });
+}
+// 往復の行き先（部隊が行き先なら、その部隊の今の位置）
+function orderGoal(u){
+  const o=u.order;if(!o)return null;
+  if(o.phase==='back')return hqReady(u.side);
+  if(o.unit!=null){const t=byId(o.unit);return t&&t.side===u.side?{q:t.q,r:t.r}:null;}
+  return {q:o.q,r:o.r};
+}
+// 行き先の隣まで、移動力の合計がいちばん少ない道（旋回も含む）。知っている部隊のマスと敵のZOCは通らない
+function pathTo(u,goal){
+  const blocked=new Set(state.units.filter(o=>o!==u&&(o.side===u.side||spotted(o,u.side))).map(o=>key(o.q,o.r)));
+  const sk=s=>s.q+','+s.r+','+s.f,start={q:u.q,r:u.r,f:u.f,c:0,prev:null,act:null},best=new Map([[sk(start),start]]),queue=[start];
+  while(queue.length){
+    let bi=0;for(let i=1;i<queue.length;i++)if(queue[i].c<queue[bi].c)bi=i;
+    const s=queue.splice(bi,1)[0];if(best.get(sk(s))!==s)continue;
+    if(dist(s,goal)<=1){const acts=[];for(let x=s;x.prev;x=x.prev)acts.unshift(x.act);return acts;}
+    const push=n=>{const k=sk(n),o=best.get(k);if(!o||o.c>n.c){best.set(k,n);queue.push(n);}};
+    [-1,1].forEach(dl=>push({q:s.q,r:s.r,f:(s.f+dl+6)%6,c:s.c+cfg.turnCost,prev:s,act:{t:'turn',dl}}));
+    for(let d=0;d<6;d++){
+      const nq=s.q+DIRS[d][0],nr=s.r+DIRS[d][1],k=key(nq,nr);
+      if(!cells.has(k)||blocked.has(k)||(inZoc(nq,nr,u.side)&&dist({q:nq,r:nr},goal)>1))continue;
+      const c=moveCost(s,d);if(!isFinite(c))continue;
+      const rel=(d-s.f+6)%6;push({q:nq,r:nr,f:(rel===1||rel===5)?d:s.f,c:s.c+c,prev:s,act:{t:'move',d}});
+    }
+  }
+  return null;
+}
+// AIの輜重は、本陣からいちばん離れた味方（前線）へ往復する
+function aiSupplyOrders(side){
+  const hq=honjinOf(side),front=state.units.filter(u=>u.side===side&&u.type!=='supply').sort((a,b)=>(hq?dist(b,hq)-dist(a,hq):0))[0];
+  state.units.filter(u=>u.side===side&&u.type==='supply').forEach(u=>{
+    if(!front){u.order=null;return;}
+    if(!u.order)u.order={unit:front.id,phase:u.cargo<cargoMax(u)*cfg.supplyReturn?'back':'out'};else u.order.unit=front.id;
+  });
+}
+let autoMoving=false; // 輜重の自動の往復中（手で動かしたときだけ命令を解除する）
+// 手番のはじめ：往復を命じられた輜重が自動で動く。積み荷が減ったら本陣へ戻る
+async function autoSupply(side){
+  if(isAI(side))aiSupplyOrders(side);
+  const list=state.units.filter(u=>u.side===side&&u.type==='supply'&&u.order);if(!list.length)return;
+  const g=gen;busy=true;autoMoving=true;
+  try{
+    for(const u of list){
+      if(g!==gen||state.winner||!state.units.includes(u)||!u.order||u.mp<=0)continue;
+      if(u.order.phase!=='back'&&u.cargo<cargoMax(u)*cfg.supplyReturn&&hqReady(side)){u.order.phase='back';log(uname(u)+'は積み荷が減ったので本陣へ戻る','sys',u.side);}
+      const goal=orderGoal(u);
+      if(!goal){if(u.order.unit!=null&&u.order.phase!=='back'){log(uname(u)+'の行き先の部隊がいなくなった（往復を解除）','sys',u.side);u.order=null;}continue;}
+      if(dist(u,goal)<=1)continue; // 着いている（本陣なら次の手番のはじめに積み込む）
+      const acts=pathTo(u,goal);
+      if(!acts){log(uname(u)+'の道がふさがれている','sys',u.side);continue;}
+      state.selected=u.id;
+      for(const a of acts){
+        if(g!==gen||!state.units.includes(u))break;
+        const q=u.q,r=u.r,f=u.f,pm=state.march;
+        if(a.t==='move'){state.march=u.hidden&&onCover({q:u.q+DIRS[a.d][0],r:u.r+DIRS[a.d][1]})?'hidden':'normal';await tryMove(u,a.d);state.march=pm;}else tryTurn(u,a.dl);
+        if(u.q===q&&u.r===r&&u.f===f)break; // 移動力が足りない、または止められた
+        render();await sleep(140);
+      }
+    }
+  }finally{autoMoving=false;if(g===gen){busy=false;state.selected=null;}}
+}
+// 手番の始まり（補給の自動の動きを済ませてから、AIの手番なら考えはじめる）
+async function beginSide(side){
+  await autoSupply(side);state.history=[];render(); // 自動で動いた分は取り消せない
+  if(!state.winner&&isAI(side)&&state.side===side)setTimeout(runAI,350);
 }
 /* ---- 士気 ---- */
 const moraleOf=u=>Math.round(u.morale??100);
@@ -182,7 +279,7 @@ function moraleTick(side){
       if(menOf(u)<=0){state.units=state.units.filter(x=>x!==u);log(uname(u)+'は士気が尽き、残る兵も逃げ散った','kill',privOf(u));return;}
       log(uname(u)+'から'+lost+'人が脱走（士気'+moraleOf(u)+'、残り'+menOf(u)+'人）','sys',privOf(u));
     }
-    if(!state.taken[side]&&!inContact(u))shiftMorale(u,cfg.moraleRecover);
+    if(u.supplied&&!inContact(u))shiftMorale(u,cfg.moraleRecover); // 補給が届き、敵と接していなければ回復
   });
   checkWinner();
 }
@@ -265,7 +362,7 @@ const inReach=(a,p)=>{const d=dist(a,p),U=cfg.units[a.type];return d>=U.rmin&&d<
 function canStrike(a,t){if(a.type==='cav'&&fenceAt(t))return false; // 柵にこもる部隊へ騎兵は突撃できない
   return inReach(a,t);}
 function canAttack(a,t){
-  if(a.attacked||a.pending||t.side===a.side||!spotted(t,a.side))return false;
+  if(a.type==='supply'||a.attacked||a.pending||t.side===a.side||!spotted(t,a.side))return false;
   return canStrike(a,t);
 }
 const surprise=u=>u.hidden&&!u.sprung; // この攻撃が奇襲になるか
@@ -299,7 +396,7 @@ function computeAttack(a,t,amb){
 }
 // 前方（正面・斜め前）から攻撃され、攻撃側が射程内にいれば反撃する
 function canCounter(a,t){
-  if(cfg.counter<=0||relAngle(t,a)>90+EPS)return false;
+  if(cfg.counter<=0||t.type==='supply'||relAngle(t,a)>90+EPS)return false;
   const d=dist(a,t),D=cfg.units[t.type];
   return d>=D.rmin&&d<=D.rmax;
 }
@@ -318,6 +415,7 @@ function tryMove(u,d){
   if(state.prompt||state.phase!=='battle'||state.winner||u.side!==state.side||u.attacked||u.pending)return;
   const nq=u.q+DIRS[d][0],nr=u.r+DIRS[d][1];
   if(!cells.has(key(nq,nr)))return;
+  if(u.order&&!autoMoving){u.order=null;log(uname(u)+'の往復を解除（手で動かした）','sys',u.side);}
   const o=unitAt(nq,nr);
   if(o&&(o.side===u.side||!o.hidden))return;
   const cost=stepCost(u,d);if(u.mp<cost)return;
@@ -502,11 +600,12 @@ function endTurn(){
     log(uname(u)+'が隠れた','sys',u.side);
     if(was)log(SIDE_NAME[u.side]+'の'+cfg.units[u.type].name+'が姿を消した','sys',other);
   });
+  eatTick(state.side);checkWinner();if(state.winner){render();return;}
   state.side=state.side==='blue'?'red':'blue';
   if(state.side==='blue')state.turn++;
-  state.selected=null;state.history=[];
+  state.selected=null;state.history=[];state.pick=null;
   log('第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番','sys');startSide(state.side);render(); // 回復は手番の見出しのあとに記録
-  if(isAI(state.side))setTimeout(runAI,350);
+  beginSide(state.side);
 }
 
 /* ---- AI (red) ---- */
@@ -590,7 +689,7 @@ function evalState(u,s,ctx,hideEnd){
   const concealed=hideEnd||(s.hid&&!(target&&!(u.type==='archer'&&dist(V,target)>=2)));
   let threat=0;
   enemies.forEach(e=>{
-    if(kills&&e===target)return;
+    if(kills&&e===target||e.type==='supply')return;
     const E=cfg.units[e.type],d=dist(e,V);if(d>E.mp+E.rmax)return;
     const r=computeAttack({q:e.q,r:e.r,f:e.f,type:e.type,hp:e.hp,dis:false,side:e.side,attacked:false},V);
     let dm=r.dm,dmg=pct(r.dmg,u);
@@ -619,7 +718,7 @@ async function runAI(){
   if(busy||state.winner||!isAI(side)||state.phase!=='battle')return;
   busy=true;const g=gen;
   const enemies=()=>state.units.filter(e=>e.side!==side&&spotted(e,side));
-  const order=state.units.filter(u=>u.side===side).sort((a,b)=>nearestDist(a,enemies())-nearestDist(b,enemies()));
+  const order=state.units.filter(u=>u.side===side&&u.type!=='supply').sort((a,b)=>nearestDist(a,enemies())-nearestDist(b,enemies()));
   for(const u of order){
     if(g!==gen||state.winner)break;
     if(!state.units.includes(u))continue;
@@ -688,7 +787,7 @@ function render(){
     if(state.phase==='setup'&&sel&&deployable(sel)&&inZone(sel.side,c.q,c.r)&&!unitAt(c.q,c.r)&&!cavBlocked(sel.type,c))cls+=' move';
     else if(moves.has(k))cls+=' move';
     else if(targets.has(k)||structTargets.has(k))cls+=' target';
-    else if(sel){const U=cfg.units[sel.type],d=dist(sel,c);if(d>=U.rmin&&d<=U.rmax&&relAngle(sel,c)<=90+EPS)cls+=' arc-'+sel.side;
+    else if(sel&&sel.type!=='supply'){const U=cfg.units[sel.type],d=dist(sel,c);if(d>=U.rmin&&d<=U.rmax&&relAngle(sel,c)<=90+EPS)cls+=' arc-'+sel.side;
       else if(showZoc&&!seenAt(c.q,c.r)&&inZoc(c.q,c.r,state.side))cls+=' zoc';}
     else if(showZoc&&!seenAt(c.q,c.r)&&inZoc(c.q,c.r,state.side))cls+=' zoc';
     h+='<polygon class="'+cls+'" data-key="'+k+'" points="'+hexPts(c.x,c.y)+'"/>';
@@ -714,12 +813,16 @@ function render(){
     h+='<rect class="hpbg" x="-14" y="21" width="28" height="2"/><rect class="mor'+(moraleOf(u)<cfg.desertLine?' low':'')+'" x="-14" y="21" height="2" width="'+(28*moraleOf(u)/100).toFixed(1)+'"/>'; // 士気
     if(u.dis)h+='<text class="dis" x="14" y="-12">乱</text>';
     if(u.hidden||u.pending)h+='<text class="badge'+(u.pending?' pend':'')+'" x="-20" y="-12">伏</text>';
+    if((u.side===v||v==null)&&(u.starving||foodTurnsOf(u)<=1))h+='<text class="badge food'+(u.starving?' out':'')+'" x="-20" y="4">'+(u.starving?'飢':'糧')+'</text>'; // 兵糧が残り少ない・尽きた
     if(u.shotFrom!=null){ // 矢の来た方向を示す矢印（向きだけで、距離は分からない）
       const o=toScreen(DIRS[u.shotFrom][0],DIRS[u.shotFrom][1]),L=Math.hypot(o.x,o.y),ux=o.x/L,uy=o.y/L,tip=L*0.5,base=L*0.8,w=5;
       h+='<polygon class="shot" points="'+(ux*tip).toFixed(1)+','+(uy*tip).toFixed(1)+' '+(ux*base-uy*w).toFixed(1)+','+(uy*base+ux*w).toFixed(1)+' '+(ux*base+uy*w).toFixed(1)+','+(uy*base-ux*w).toFixed(1)+'"/>';
     }
     h+='</g>';
   });
+  // 選んだ自軍の輜重の行き先
+  if(sel&&sel.type==='supply'&&sel.order&&(sel.side===v||v==null)){const gl=orderGoal(sel),a=cells.get(key(sel.q,sel.r)),b=gl&&cells.get(key(gl.q,gl.r));
+    if(a&&b)h+='<line class="route" x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'"/><text class="lbl" x="'+b.x+'" y="'+(b.y+S*K*0.6).toFixed(1)+'">'+(sel.order.phase==='back'?'本陣へ':'行き先')+'</text>';}
   h+='</g><g>';
   structTargets.forEach((t,k)=>{const c=cells.get(k);h+='<text class="lbl dmg" x="'+c.x+'" y="'+(c.y+(targets.has(k)?S*K*0.78:-S*K*0.78)).toFixed(1)+'">'+t+'</text>';});
   targets.forEach((r,k)=>{const c=cells.get(k);h+='<text class="lbl dmg" x="'+c.x+'" y="'+(c.y-S*K*0.78).toFixed(1)+'">−'+r.loss+'人'+(r.dm!==1?' ×'+r.dm:'')+(r.closs?' 反−'+r.closs+'人':'')+'</text>';});
@@ -818,6 +921,9 @@ function renderPanel(sel,mine,v){
     ub.innerHTML='<div class="uname">'+uname(sel)+'</div><dl>'+
       '<dt>兵数</dt><dd>'+menOf(sel)+' / '+sel.men0+'人</dd>'+
       '<dt>士気</dt><dd>'+moraleOf(sel)+(moraleOf(sel)<cfg.desertLine?'（脱走が出ている）':'')+'</dd>'+
+      (sel.side===v||v==null?'<dt>兵糧</dt><dd>'+(sel.starving?'尽きている（毎ターン士気−'+cfg.hungerMorale+'）':'あと'+foodTurnsOf(sel)+'ターン分')+'（'+Math.round(sel.food)+'）、補給'+(sel.supplied?'が届いている':'が届いていない')+'</dd>'+
+        (sel.type==='supply'?'<dt>積み荷</dt><dd>'+Math.round(sel.cargo)+' / '+cargoMax(sel)+'（'+cfg.supplyRange+'マス以内に配る）</dd>'+
+          '<dt>往復</dt><dd>'+(!sel.order?'なし':(sel.order.unit!=null?(byId(sel.order.unit)?uname(byId(sel.order.unit)):'？'):'マス')+'へ'+(sel.order.phase==='back'?'（本陣へ戻る途中）':''))+'</dd>':''):'')+
       '<dt>移動力</dt><dd>'+(sel.side===state.side?sel.mp:U.mp)+' / '+U.mp+'</dd>'+
       '<dt>攻撃／防御（1人）</dt><dd>'+U.atk+' / '+U.def+'</dd>'+
       '<dt>射程</dt><dd>'+(U.rmin===U.rmax?U.rmin:U.rmin+'〜'+U.rmax)+'</dd>'+
@@ -825,6 +931,8 @@ function renderPanel(sel,mine,v){
       '<dt>状態</dt><dd>'+(st.join('、')||'通常')+'</dd></dl>'+
       (mine&&!busy?'<div class="row"><button id="bL"'+(canT?'':' disabled')+'>左に旋回（'+tc+'）</button><button id="bR"'+(canT?'':' disabled')+'>右に旋回（'+tc+'）</button></div>'+
         (contact&&!sel.dis?'<p class="hint" style="margin-top:.4rem">接触中に旋回すると隊列が乱れます。</p>':'')+
+        (sel.type==='supply'?(state.pick===sel.id?'<p class="hint" style="margin-top:.4rem">行き先のマスか、付いて行く味方の部隊をクリックしてください（Esc でやめる）。</p><div class="row"><button class="ghost" id="bPickX">やめる</button></div>'
+          :'<div class="row"><button id="bOrder">往復を命じる</button>'+(sel.order?'<button class="ghost" id="bOrderX">往復を解除</button>':'')+'</div><p class="hint" style="margin-top:.3rem">本陣と行き先を自動で往復し、手番のはじめに動きます。積み荷が'+Math.round(cfg.supplyReturn*100)+'%を切ると本陣へ戻って積み込みます。手で動かすと解除されます。</p>'):'')+
         (sel.type==='spear'?(()=>{
           const jp=workSpot(sel,'jinchi'),jt=jp?workType(jp,'jinchi'):'jinchi';
           const prog=(t,p)=>{const x=p&&struct[key(p.q,p.r)];return x&&featOf(p)?.type===t?' '+x.hp+'／'+maxOf(t):'';},r='+'+workRate(sel);
@@ -837,6 +945,7 @@ function renderPanel(sel,mine,v){
   const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
   on('bEnd',endTurn);on('bUndo',undo);on('bNew',()=>newGame(false));on('bEdit',editFormation);on('bCfg',openSettings);on('bMaps2',openMaps);on('bMan',openManual);
   on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));
+  on('bOrder',()=>{state.pick=sel.id;render();});on('bPickX',()=>{state.pick=null;render();});on('bOrderX',()=>{sel.order=null;log(uname(sel)+'の往復を解除','sys',sel.side);render();});
   on('bHide',()=>hideUnit(sel));on('bFence',()=>work(sel,'fence'));on('bFort',()=>work(sel,'jinchi'));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
   const ai=document.getElementById('cAi');if(ai)ai.onchange=()=>{aiRed=ai.checked;if(aiRed&&state.side==='red'&&state.phase==='battle')runAI();};
   const z=document.getElementById('cZoc');if(z)z.onchange=()=>{showZoc=z.checked;render();};
@@ -854,6 +963,14 @@ svg.addEventListener('click',e=>{
   const [q,r]=el.dataset.key.split(',').map(Number);
   const sel=state.selected!=null?byId(state.selected):null;
   const u=seenAt(q,r);
+  if(state.pick!=null){ // 輜重の往復の行き先
+    const s=byId(state.pick);state.pick=null;
+    if(s&&s.side===state.side&&state.phase==='battle'){
+      if(u&&u.side===s.side&&u!==s&&u.type!=='supply'){s.order={unit:u.id,phase:'out'};log(uname(s)+'に'+uname(u)+'への往復を命じた','sys',s.side);}
+      else if(!(u&&u===s)){s.order={q,r,phase:'out'};log(uname(s)+'に往復を命じた（行き先のマスへ）','sys',s.side);}
+    }
+    render();return;
+  }
   const canU=sel&&sel.side===state.side&&u&&u.side!==sel.side&&canAttack(sel,u);
   const canS=state.phase==='battle'&&sel&&sel.side===state.side&&canHitStruct(sel,{q,r});
   state.choice=null;
@@ -882,7 +999,7 @@ document.addEventListener('keydown',e=>{
   else if((e.key==='f'||e.key==='F')&&sel)work(sel,'jinchi');
   else if((e.key==='m'||e.key==='M')&&sel&&sel.hidden){state.march=state.march==='normal'?'hidden':'normal';render();}
   else if(e.key==='Enter'){endTurn();}
-  else if(e.key==='Escape'){if(state.choice)state.choice=null;else state.selected=null;render();}
+  else if(e.key==='Escape'){if(state.pick!=null)state.pick=null;else if(state.choice)state.choice=null;else state.selected=null;render();}
 });
 
 /* ---- 数値調整タブから届いた値を反映 ---- */
