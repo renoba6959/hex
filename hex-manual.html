@@ -37,12 +37,15 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
       <li><a href="#flow">ゲームの流れ</a></li>
       <li><a href="#win">勝敗</a></li>
       <li><a href="#units">部隊と兵数</a></li>
+      <li><a href="#morale">士気</a></li>
       <li><a href="#move">向きと移動</a></li>
       <li><a href="#attack">攻撃</a></li>
       <li><a href="#terrain">地形</a></li>
+      <li><a href="#sight">視界</a></li>
       <li><a href="#ambush">伏兵</a></li>
       <li><a href="#bases">拠点</a></li>
       <li><a href="#build">工事と破壊</a></li>
+      <li><a href="#ai">赤軍のAI</a></li>
       <li><a href="#keys">操作</a></li>
       <li><a href="#tools">マップ編集と数値調整</a></li>
       <li><a href="#design">数値の考え方</a></li>
@@ -59,15 +62,31 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
 
     <h2 id="win">勝敗</h2>
     <ul>
-      <li>敵の部隊を<b>全滅</b>させたら勝ちです。</li>
-      <li>敵の<b>本陣</b>のマスに自軍の部隊が入ったら、その時点で勝ちです。</li>
-      <li>本陣のない軍（遠征軍）は、全滅しない限り負けません。そのかわり本陣で回復できません。</li>
+      <li>敵の部隊を<b>全滅</b>させたら勝ちです。士気が尽きて兵が逃げ散った部隊も、いなくなったものとして数えます。</li>
+      <li>敵の<b>本陣</b>を占領しても、すぐには勝ちになりません。占領された側は全部隊の士気が大きく下がり、占領されている間は下がり続けます（<a href="#morale">士気</a>）。自軍の部隊が本陣に入れば奪い返せます。</li>
+      <li>本陣のない軍（遠征軍）は、本陣を占領される心配がありません。そのかわり本陣で回復できません。</li>
     </ul>
 
     <h2 id="units">部隊と兵数</h2>
     <table id="unitTable"></table>
     <p>部隊の強さは兵数で決まります。与える損害は<b>攻撃側の今の兵数に比例</b>するので、兵が減るほど弱くなります（ランチェスターの二乗則）。兵数の2倍の差は、戦う力では4倍の差になります。</p>
     <p>部隊の耐久は「兵数 × 1人あたりのHP」で、損害を受けると兵数が減ります。</p>
+
+    <h2 id="morale">士気</h2>
+    <p>部隊ごとに士気（0〜100、最初は100）があります。盤面では、兵数の棒の下の細い棒が士気です。</p>
+    <ul>
+      <li>士気が <span class="v" data-v="desertLine"></span> を切ると、自軍の手番のはじめに兵が脱走します。士気が低いほど多く、士気0では今いる兵の <span class="v" data-v="desertMax" data-pct></span> が逃げ出します。</li>
+      <li>敵と接していなければ、手番のはじめに士気が <span class="v" data-v="moraleRecover"></span> 回復します（本陣を占領されている間は回復しません）。</li>
+    </ul>
+    <table>
+      <tr><th>出来事</th><th>士気</th></tr>
+      <tr><td>兵を失う</td><td>最初の兵数の1%につき −<span data-v="lossMorale"></span></td></tr>
+      <tr><td>側面・背後から攻撃される、奇襲を受ける</td><td>さらに −<span data-v="flankMorale"></span></td></tr>
+      <tr><td>近く（2マス以内）の味方が壊滅する</td><td>−<span data-v="allyLostMorale"></span></td></tr>
+      <tr><td>敵の部隊を壊滅させる</td><td>+<span data-v="killMorale"></span></td></tr>
+      <tr><td>本陣を占領される</td><td>全部隊 −<span data-v="honjinLossMorale"></span>、占領中は毎ターン −<span data-v="honjinOccupiedMorale"></span></td></tr>
+      <tr><td>本陣を奪い返す</td><td>全部隊 +<span data-v="honjinRetakeMorale"></span></td></tr>
+    </table>
 
     <h2 id="move">向きと移動</h2>
     <p>部隊は6方向のどれかを向いています。向きによって移動のしやすさと、攻撃の受け方が変わります。</p>
@@ -90,10 +109,12 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     <h3>攻撃する方向</h3>
     <table>
       <tr><th>敵のどこを攻撃するか</th><th>損害の倍率</th></tr>
-      <tr><td>正面・斜め前</td><td class="v">×1</td></tr>
+      <tr><td>正面</td><td class="v">×1</td></tr>
+      <tr><td>斜め前</td><td class="v" data-v="obliqueDef" data-x></td></tr>
       <tr><td>斜め後ろ</td><td class="v" data-v="side" data-x></td></tr>
       <tr><td>真後ろ</td><td class="v" data-v="rear" data-x></td></tr>
     </table>
+    <p>攻撃する側も、自分の真正面ではなく斜め前にいる敵を攻撃すると、攻撃力が <span class="v" data-v="obliqueAtk" data-x></span> になります。反撃のときも同じです。</p>
     <h3>反撃</h3>
     <p>前方（正面・斜め前）から攻撃された部隊は、攻撃側が射程内にいれば反撃します。反撃は、攻撃を受けて減った兵数で、倍率 <span class="v" data-v="counter" data-x></span> をかけて計算します。横や背後からの攻撃には反撃できません。</p>
     <h3>そのほか</h3>
@@ -106,6 +127,18 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     <h2 id="terrain">地形</h2>
     <table id="terrainTable"></table>
     <p>騎兵は山に入れず、森から攻撃すると力が落ちます（×<span data-v="cavForest"></span>）。川は隣り合う川マスどうしでつながった流れとして描かれます。</p>
+
+    <h2 id="sight">視界</h2>
+    <p>部隊は、見えている範囲の敵しか分かりません。自軍のどれかの部隊から見えていれば、その敵は画面に出ます。見えていないマスは暗くなります。</p>
+    <ul>
+      <li>前方（攻撃できる向き、左右90°まで）は <span class="v" data-v="visFront"></span> マス先まで、それ以外は <span class="v" data-v="visRear"></span> マス先まで見えます。</li>
+      <li>丘・山の上からは、視界が <span class="v" data-v="visHigh"></span> マス伸び、森越しに見渡せます。</li>
+      <li>森と山は、その向こうへの視線をさえぎります。森の中は、隣のマスからしか見えません。</li>
+      <li>見失った敵は、最後に見た位置に「？」の印が残ります。そのマスが見えるようになって、敵がいなければ印は消えます。</li>
+      <li>攻撃した部隊は、相手の次の手番が終わるまで、相手に位置が知られます。</li>
+      <li>見えていない敵は攻撃できません。移動して新しく敵を見つけたら、それまでの行動は取り消せません。</li>
+      <li>ゲーム画面の「視界（索敵）」を外すと、敵が全部見える遊び方になります。</li>
+    </ul>
 
     <h2 id="ambush">伏兵</h2>
     <h3>隠蔽</h3>
@@ -147,6 +180,20 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
       <li>工事をするとその部隊の行動は終わり、次の自軍の手番まで無防備になります。攻撃されると奇襲の倍率を受け、反撃できず、隊列が乱れます。</li>
     </ul>
     <p id="buildExample" class="note"></p>
+
+    <h2 id="ai">赤軍のAI</h2>
+    <p>赤軍を AI に任せると、作戦（性格）に沿って動きます。AI も視界のルールに従い、見えていない青軍のことは知りません。</p>
+    <table>
+      <tr><th>作戦</th><th>動き</th></tr>
+      <tr><td>猛進</td><td>隠れずに敵の本陣の占領を狙う。多少の損害は気にしない</td></tr>
+      <tr><td>慎重</td><td>危険を避け、不利な戦いはしない。隙を見せた敵を叩く</td></tr>
+      <tr><td>伏兵</td><td>敵の視界の外を回り込み、隠れて奇襲を狙う</td></tr>
+      <tr><td>要地</td><td>丘・森・砦・村など守りやすい場所を取り、迎え撃つ</td></tr>
+    </table>
+    <ul>
+      <li>作戦はマップ編集でマップごとに決められます。配置画面の「赤軍のAI」で、そのマップの設定を上書きすることもできます。</li>
+      <li>「ランダム」にすると、戦闘ごとに作戦が選ばれ、決着するまで伏せられます。</li>
+    </ul>
 
     <h2 id="keys">操作</h2>
     <table>

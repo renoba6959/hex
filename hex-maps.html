@@ -72,6 +72,8 @@ textarea{width:100%;min-height:7rem;font-family:ui-monospace,Menlo,monospace;fon
       <h2>マップ</h2>
       <ul class="maps" id="maps"></ul>
       <div class="row"><label class="chk">大きさ <input type="number" id="iCols" aria-label="列の数"> 列 × <input type="number" id="iRows" aria-label="行の数"> 行</label><button class="ghost" id="bSize">変更</button></div>
+      <div class="row"><label class="chk">赤軍のAI <select id="selAi"></select></label></div>
+      <p class="hint" id="aiDesc"></p>
     </div>
     <details class="box">
       <summary>書き出し・読み込み</summary>
@@ -178,6 +180,9 @@ function drawList(){
   const m=cur();
   document.getElementById('bRename').disabled=document.getElementById('bDel').disabled=document.getElementById('bSize').disabled=!!m.builtin;
   const ic=document.getElementById('iCols'),ir=document.getElementById('iRows');
+  const sa=document.getElementById('selAi'),ai=m.ai||'random';
+  sa.innerHTML='<option value="random">ランダム（決着まで伏せる）</option>'+Object.entries(AI_STYLES).map(([k,n])=>'<option value="'+k+'">'+n+'</option>').join('');
+  sa.value=ai;sa.disabled=!!m.builtin;document.getElementById('aiDesc').textContent=ai==='random'?'戦闘ごとに作戦が選ばれます。':AI_STYLE_DESC[ai];
   ic.value=m.cols;ir.value=m.rows;ic.min=SIZE_MIN.cols;ic.max=SIZE_MAX.cols;ir.min=SIZE_MIN.rows;ir.max=SIZE_MAX.rows;ic.disabled=ir.disabled=!!m.builtin;
   document.getElementById('wrap').classList.toggle('readonly',!!m.builtin);
 }
@@ -274,6 +279,7 @@ function addMap(src){const m=cleanMap({...src,id:newId()});db.maps.push(m);editI
 const STD=BUILTIN_MAPS[0];
 document.getElementById('bNew').onclick=()=>{const n=prompt('新しいマップの名前（部隊は標準の布陣から始まります）','新しいマップ');if(n!==null)addMap({name:n.trim()||'新しいマップ',terrain:{},units:JSON.parse(JSON.stringify(STD.units))});};
 document.getElementById('bDup').onclick=()=>{const m=cur();addMap({...JSON.parse(JSON.stringify(m)),name:m.name+'のコピー'});setMsg('複製しました');};
+document.getElementById('selAi').onchange=e=>{const m=cur();if(m.builtin)return;if(e.target.value==='random')delete m.ai;else m.ai=e.target.value;saveMaps(db);drawList();};
 document.getElementById('bRename').onclick=()=>{const m=cur();if(m.builtin)return;const n=prompt('マップの名前',m.name);if(n!==null&&n.trim()){m.name=n.trim();saveMaps(db);drawList();}};
 document.getElementById('bDel').onclick=()=>{
   const m=cur();if(m.builtin||!confirm('「'+m.name+'」を削除しますか？'))return;
@@ -285,7 +291,7 @@ document.getElementById('bUse').onclick=()=>{
   if(g)g.postMessage({type:MAP_MSG},'*');
   setMsg('「'+cur().name+'」をゲームで使います（戦闘中なら次の戦闘から）');
 };
-document.getElementById('bExport').onclick=()=>{const m=cur(),o={name:m.name,cols:m.cols,rows:m.rows,terrain:m.terrain,features:m.features||{},units:m.units};if(m.zones)o.zones=m.zones;document.getElementById('io').value=JSON.stringify(o);};
+document.getElementById('bExport').onclick=()=>{const m=cur(),o={name:m.name,cols:m.cols,rows:m.rows,terrain:m.terrain,features:m.features||{},units:m.units};if(m.zones)o.zones=m.zones;if(m.ai)o.ai=m.ai;document.getElementById('io').value=JSON.stringify(o);};
 document.getElementById('bCopy').onclick=async()=>{const ta=document.getElementById('io');try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}setMsg('コピーしました');};
 document.getElementById('bImport').onclick=()=>{
   try{const o=JSON.parse(document.getElementById('io').value);if(!o||typeof o!=='object'||typeof o.terrain!=='object')throw 0;addMap({...o,name:o.name||'読み込んだマップ'});setMsg('読み込みました');}

@@ -26,10 +26,12 @@ svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:mani
 .unit.side-blue .totsu{fill:var(--blue)} .unit.side-red .totsu{fill:var(--red)}
 .unit.done{opacity:.55}
 .ulabel{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--unit-text);text-anchor:middle;dominant-baseline:central;pointer-events:none}
-.hpbg{fill:var(--grid)} .hp{fill:var(--ink)}
+.hpbg{fill:var(--grid)} .hp{fill:var(--ink)} .mor{fill:#D8A23A} .mor.low{fill:var(--red)}
 .dis{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--ink);paint-order:stroke;stroke:var(--map);stroke-width:3px}
 .unit.hid .totsu,.mark .totsu{fill-opacity:.5;stroke-dasharray:3 2}
 .mark{pointer-events:none;opacity:.75}
+.lbl.taken{fill:var(--red);font-size:12px}
+.fog{fill:#141A28;fill-opacity:.42;stroke:none}
 .badge{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--ink);paint-order:stroke;stroke:var(--map);stroke-width:3px}.badge.pend{opacity:.5}
 .shot{fill:var(--red);stroke:var(--map);stroke-width:1.5;pointer-events:none}
 .prompt{border-left-color:var(--target)}
@@ -117,7 +119,7 @@ function newGame(edit){
   else (map.units||[]).forEach(o=>{const c=fromCR(o.col,o.row);add(o.side,o.type,c.q,c.r,o.f,o.men);});
   units.filter(u=>cavBlocked(u.type,u)).forEach(u=>{const c=[...cells.values()].filter(c=>!cavBlocked(u.type,c)&&!units.some(x=>x.q===c.q&&x.r===c.r)).sort((a,b)=>dist(a,u)-dist(b,u))[0];if(c){u.q=c.q;u.r=c.r;}}); // 山に置かれた騎兵は近くの山以外へよける
   renumber(units);
-  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[]};
+  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false}};
   if(!edit&&canStart()){startBattle();return;} // 保存済みの配置でそのまま始める
   log(canStart()?'配置：部隊の位置と向きを決めてください':'このマップには両軍の部隊がそろっていません。マップ編集で部隊を置いてください','sys');render();
 }
@@ -130,6 +132,9 @@ const canStart=()=>['blue','red'].every(s=>state.units.some(u=>u.side===s));
 function startBattle(){
   if(state.phase!=='setup'||!canStart())return;
   state.phase='battle';state.selected=null;
+  // 赤軍AIの作戦：ゲーム画面で選んだもの、なければマップの設定。ランダムなら決着まで伏せる
+  const pick=aiPick==='map'?(findMap(loadMaps(),state.mapId).ai||'random'):aiPick,ks=Object.keys(AI_STYLES);
+  state.aiStyle=pick==='random'?ks[Math.floor(Math.random()*ks.length)]:pick;state.aiSecret=pick==='random';
   log('戦闘開始　青軍'+sideMen('blue')+'人、赤軍'+sideMen('red')+'人','sys');
   startSide('blue');log('第1ターン　青軍の手番','sys');render();
 }
@@ -138,7 +143,7 @@ const DEF_F={blue:0,red:3}; // 青は右、赤は左を向く
 function makeUnit(id,side,type,q,r,f,men){
   const men0=Math.max(1,Math.round(men||cfg.units[type].men));
   return {id,no:0,side,type,q,r,f:((f|0)%6+6)%6,men0,hp:men0*cfg.units[type].hp,mp:0,attacked:false,dis:false,
-    hidden:false,pending:false,sprung:false,mark:null,shotFrom:null,worked:false}; // worked＝工事で手番を終えた（次の手番まで無防備）
+    morale:100,hidden:false,pending:false,sprung:false,mark:null,shotFrom:null,worked:false,exposed:false}; // worked＝工事で手番を終えた（次の手番まで無防備）
   // hidden＝隠蔽中、pending＝手番の終わりに隠れる、sprung＝この隠蔽での奇襲は済んだ、mark＝敵が最後に見た位置、shotFrom＝矢を受けた方向
 }
 function renumber(units){const n={};units.forEach(u=>{const k=u.side+u.type;u.no=n[k]=(n[k]||0)+1;});}
@@ -150,14 +155,37 @@ function rotateSetup(u,dl){if(!deployable(u))return;u.f=(u.f+dl+6)%6;formChanged
 function placeSetup(u,q,r){if(!deployable(u)||!inZone(u.side,q,r)||unitAt(q,r)||cavBlocked(u.type,{q,r}))return;u.q=q;u.r=r;formChanged();}
 function resetFormation(){delete formation.byMap[state.mapId];try{localStorage.setItem(FORM_STORE,JSON.stringify(formation));}catch(e){}newGame(true);}
 function startSide(side){state.units.filter(u=>u.side===side).forEach(u=>{
-  u.mp=cfg.units[u.type].mp;u.attacked=false;u.dis=false;u.worked=false;
+  u.mp=cfg.units[u.type].mp;u.attacked=false;u.dis=false;u.worked=false;u.exposed=false;
   // 村（1割）や自軍の本陣（2割）にいて敵と接していなければ、最初の兵数まで回復する
-  const f=featOf(u),rate=f?.type==='village'?cfg.villageHeal:f?.type==='honjin'&&f.side===u.side?cfg.honjinHeal:0;
+  const f=featOf(u),rate=f?.type==='village'?cfg.villageHeal:f?.type==='honjin'&&f.side===u.side&&!state.taken[u.side]?cfg.honjinHeal:0;
   if(rate>0&&!inContact(u)&&u.hp<maxHp(u)){
     const before=menOf(u);u.hp=Math.min(maxHp(u),u.hp+maxHp(u)*rate);
     if(menOf(u)>before)log(uname(u)+'が'+(f.type==='village'?'村':'本陣')+'で'+(menOf(u)-before)+'人回復（'+menOf(u)+'人）','sys',u.side);
   }
-});}
+});
+  moraleTick(side);
+}
+/* ---- 士気 ---- */
+const moraleOf=u=>Math.round(u.morale??100);
+function shiftMorale(u,d){u.morale=Math.min(100,Math.max(0,(u.morale??100)+d));}
+// 損害を受けたときの動揺。heavy＝側面・背後・奇襲など
+function shaken(u,lost,heavy){if(!state.units.includes(u))return;shiftMorale(u,-(lost/u.men0*100*cfg.lossMorale+(heavy?cfg.flankMorale:0)));}
+// 手番のはじめ：本陣を占領されている間は下がり、敵と接していなければ回復し、士気が低いと脱走が出る
+function moraleTick(side){
+  const us=state.units.filter(u=>u.side===side);
+  if(state.taken[side]&&cfg.honjinOccupiedMorale>0){us.forEach(u=>shiftMorale(u,-cfg.honjinOccupiedMorale));log(SIDE_NAME[side]+'の本陣は占領されたまま（士気−'+cfg.honjinOccupiedMorale+'）','sys',side);}
+  us.forEach(u=>{
+    // 脱走は今の士気で決まり、そのあとで回復する
+    const m=u.morale??100,men=menOf(u),lost=m<cfg.desertLine?Math.round(men*(cfg.desertLine-m)/cfg.desertLine*cfg.desertMax):0;
+    if(lost>=1){
+      u.hp-=lost*cfg.units[u.type].hp;
+      if(menOf(u)<=0){state.units=state.units.filter(x=>x!==u);log(uname(u)+'は士気が尽き、残る兵も逃げ散った','kill',privOf(u));return;}
+      log(uname(u)+'から'+lost+'人が脱走（士気'+moraleOf(u)+'、残り'+menOf(u)+'人）','sys',privOf(u));
+    }
+    if(!state.taken[side]&&!inContact(u))shiftMorale(u,cfg.moraleRecover);
+  });
+  checkWinner();
+}
 const maxHp=u=>u.men0*cfg.units[u.type].hp;
 const menOf=u=>Math.max(0,Math.ceil(u.hp/cfg.units[u.type].hp-1e-9)); // 残りHPを1人あたりHPで割って切り上げ
 const lossOf=(u,dmg)=>menOf(u)-menOf({...u,hp:u.hp-dmg}); // ダメージで減る人数
@@ -169,7 +197,57 @@ function viewer(){
   if(state.prompt){const h=byId(state.prompt.h);if(h)return h.side;}
   return aiRed?'blue':state.side;
 }
-const seen=(u,v=viewer())=>v==null||u.side===v||!u.hidden;
+/* ---- 視界（索敵） ---- */
+// 前方（攻撃できる向き、左右90°まで）は visFront マス、それ以外は visRear マス先まで見える。丘・山の上なら visHigh マス伸びる
+// 森・山は視線をさえぎる（丘・山の上からは森越しに見える）。森の中は隣のマスからしか見えない
+let useFog=true;try{useFog=localStorage.getItem('hex-fog')!=='0';}catch(e){}
+const other=s=>s==='blue'?'red':'blue';
+function hexLine(a,b){ // a と b の間のマス（両端を除く）。境目をかすめる線は、さえぎられにくい側を取る
+  const n=dist(a,b),out=[];
+  const rnd=(q,r)=>{let x=Math.round(q),z=Math.round(r),y=Math.round(-q-r);const dx=Math.abs(x-q),dz=Math.abs(z-r),dy=Math.abs(y+q+r);if(dx>dy&&dx>dz)x=-y-z;else if(dz>dy)z=-x-y;return {q:x,r:z};};
+  for(let i=1;i<n;i++){const t=i/n;out.push([rnd(a.q+(b.q-a.q)*t+1e-6,a.r+(b.r-a.r)*t+1e-6),rnd(a.q+(b.q-a.q)*t-1e-6,a.r+(b.r-a.r)*t-1e-6)]);}
+  return out;
+}
+function sightOf(u,round=false){ // round＝向きが分からないので全方向を前方の視界で見る（AIの推測用）
+  const out=new Set([key(u.q,u.r)]),high=terOf(u)==='hill'||terOf(u)==='mountain',add=high?cfg.visHigh:0;
+  const blocks=p=>{const t=terOf(p);return t==='mountain'||(t==='forest'&&!high);};
+  cells.forEach((c,k)=>{
+    const d=dist(u,c);if(d===0||d>(round||relAngle(u,c)<=90+EPS?cfg.visFront:cfg.visRear)+add)return;
+    if(d>1&&terOf(c)==='forest')return;
+    if(hexLine(u,c).every(([p1,p2])=>blocks(p1)&&blocks(p2)||blocks(p1)&&p1.q===p2.q&&p1.r===p2.r))return;
+    out.add(k);
+  });
+  return out;
+}
+const visCache=new Map();
+function visOf(side){ // その軍の部隊から見えるマス（部隊の位置と向きが変わらなければ使い回す）
+  const us=state.units.filter(u=>u.side===side),sig=side+cfg.visFront+','+cfg.visRear+','+cfg.visHigh+'|'+us.map(u=>u.q+','+u.r+','+u.f).join(';');
+  let v=visCache.get(sig);if(v)return v;
+  v=new Set();us.forEach(u=>sightOf(u).forEach(k=>v.add(k)));
+  if(visCache.size>200)visCache.clear();visCache.set(sig,v);return v;
+}
+// その軍が今この部隊を見つけているか。攻撃した部隊は、相手の次の手番が終わるまで位置が知られる（exposed）
+const spotted=(u,side)=>u.side===side||!u.hidden&&(!useFog||u.exposed||visOf(side).has(key(u.q,u.r)));
+// 相手から見えないところでの出来事は、自軍の記録にだけ残す
+const privOf=u=>spotted(u,other(u.side))?null:u.side;
+// 見失った敵の最後の位置（軍ごと）。新しく敵を見つけたら、それまでの行動は取り消せない
+function updateMemo(){
+  if(state.phase!=='battle')return;
+  ['blue','red'].forEach(s=>{
+    const memo=state.memo[s],vis=useFog?visOf(s):null;
+    state.units.forEach(e=>{
+      if(e.side===s||!spotted(e,s))return;
+      if(state.side===s&&!state.winner&&state.known[s]&&!state.known[s].has(e.id)){state.history=[];log(SIDE_NAME[s]+'が'+uname(e)+'を発見','sys',s);}
+      memo[e.id]={q:e.q,r:e.r};
+    });
+    // 見えているのにいない敵の印は消す（隠れた敵は見えなくてもそこにいるかもしれないので残す）
+    Object.keys(memo).forEach(id=>{const e=byId(+id),m=memo[id];
+      if(!e||!spotted(e,s)&&!e.hidden&&vis&&vis.has(key(m.q,m.r)))delete memo[id];
+    });
+    state.known[s]=new Set(state.units.filter(e=>e.side!==s&&spotted(e,s)).map(e=>e.id));
+  });
+}
+const seen=(u,v=viewer())=>v==null||spotted(u,v);
 const seenAt=(q,r)=>{const u=unitAt(q,r);return u&&seen(u)?u:null;};
 const byId=id=>state.units.find(u=>u.id===id);
 const inContact=u=>state.units.some(e=>e.side!==u.side&&!e.hidden&&dist(u,e)===1); // 隠れた敵は数えない
@@ -187,7 +265,7 @@ const inReach=(a,p)=>{const d=dist(a,p),U=cfg.units[a.type];return d>=U.rmin&&d<
 function canStrike(a,t){if(a.type==='cav'&&fenceAt(t))return false; // 柵にこもる部隊へ騎兵は突撃できない
   return inReach(a,t);}
 function canAttack(a,t){
-  if(a.attacked||a.pending||t.side===a.side||t.hidden)return false;
+  if(a.attacked||a.pending||t.side===a.side||!spotted(t,a.side))return false;
   return canStrike(a,t);
 }
 const surprise=u=>u.hidden&&!u.sprung; // この攻撃が奇襲になるか
@@ -195,7 +273,8 @@ const surprise=u=>u.hidden&&!u.sprung; // この攻撃が奇襲になるか
 const canHide=u=>state.phase==='battle'&&u.side===state.side&&(!u.hidden||u.sprung)&&!u.pending&&!u.attacked&&onCover(u)&&!inContact(u)&&u.mp>=cfg.hideCost;
 function computeAttack(a,t,amb){
   const r=relAngle(t,a);let cat,dm;
-  if(r<=30+EPS){cat='正面';dm=1}else if(r<=90+EPS){cat='斜め前';dm=1}else if(r<=150+EPS){cat='斜め後ろ';dm=cfg.side}else{cat='真後ろ';dm=cfg.rear}
+  if(r<=30+EPS){cat='正面';dm=1}else if(r<=90+EPS){cat='斜め前';dm=cfg.obliqueDef}else if(r<=150+EPS){cat='斜め後ろ';dm=cfg.side}else{cat='真後ろ';dm=cfg.rear}
+  const oa=relAngle(a,t)>30+EPS?cfg.obliqueAtk:1; // 自分の斜め前の敵を攻撃すると力が落ちる
   const A=cfg.units[a.type],D=cfg.units[t.type],mx=cfg.matrix[a.type][t.type];
   const ad=a.dis?cfg.disorder:1,dd=t.dis?cfg.disorder:1;
   const sf=(t.type==='spear'&&a.type==='cav'&&r<=90+EPS)?cfg.spearFrontDef:1;
@@ -203,11 +282,12 @@ function computeAttack(a,t,amb){
   const wk=!amb&&t.worked,am=amb||wk?cfg.ambush:1; // 工事で手番を終えた部隊は無防備（奇襲の倍率）
   // 拠点の防御。柵・陣地・砦は耐久の割合だけ効く（例：耐久100/500なら、上がり分の20%）
   const ft=featOf(t),st=structType(t);
-  const fd=+(st?1+(fullDef(t)-1)*ratioOf(t):ft?.type==='village'?cfg.villageDef:ft?.type==='honjin'&&ft.side===t.side?cfg.honjinDef:1).toFixed(2);
-  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*dm*mx*ad*tam*am/(D.def*dd*sf*tdm*fd))); // ランチェスター：損害は攻撃側の兵数に比例
+  const fd=+(st?1+(fullDef(t)-1)*ratioOf(t):ft?.type==='village'?cfg.villageDef:ft?.type==='honjin'&&ft.side===t.side&&!state.taken[t.side]?cfg.honjinDef:1).toFixed(2);
+  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*oa*dm*mx*ad*tam*am/(D.def*dd*sf*tdm*fd))); // ランチェスター：損害は攻撃側の兵数に比例
   const notes=[cat+(dm!==1?' ×'+dm:'')];
   if(amb)notes.unshift('奇襲 ×'+cfg.ambush);
   if(wk)notes.unshift('工事中を襲撃 ×'+cfg.ambush);
+  if(oa!==1)notes.push('斜め前へ攻撃 ×'+oa);
   if(mx!==1)notes.push('相性 ×'+mx);
   if(sf!==1)notes.push('槍の正面防御 ÷'+sf);
   if(tam!==1)notes.push(TER_NAME[ta]+'から攻撃 ×'+ +tam.toFixed(2));
@@ -231,7 +311,7 @@ function computeCounter(a,t,hitDmg){
 const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uname=u=>SIDE_NAME[u.side]+cfg.units[u.type].name+u.no;
 function log(text,cls='',only=null){state.log.push({text,cls,only});} // only＝その軍にだけ見える記録
-function pushHistory(){state.history.push(JSON.stringify({units:state.units,struct,logLen:state.log.length,winner:state.winner}));}
+function pushHistory(){state.history.push(JSON.stringify({units:state.units,struct,logLen:state.log.length,winner:state.winner,taken:state.taken}));}
 
 /* ---- actions ---- */
 function tryMove(u,d){
@@ -252,19 +332,27 @@ function tryMove(u,d){
   const rel=(d-u.f+6)%6;
   u.q=nq;u.r=nr;u.mp-=cost;if(rel===1||rel===5)u.f=d;
   const hq=featOf(u);
-  if(hq?.type==='honjin'&&hq.side!==u.side&&!state.winner){ // 敵の本陣に入ったら勝ち
-    state.history=[];u.hidden=false;state.winner=u.side;
-    log(uname(u)+'が'+SIDE_NAME[hq.side]+'の本陣を占領','kill');log(SIDE_NAME[u.side]+'の勝利','kill');render();return;
+  if(hq?.type==='honjin'&&!state.winner){ // 本陣の占領と奪還（即勝利ではなく、士気が大きく動く）
+    const own=hq.side===u.side;
+    if(!own&&!state.taken[hq.side]){
+      state.history=[];u.hidden=false;state.taken[hq.side]=true;
+      state.units.forEach(x=>{if(x.side===hq.side)shiftMorale(x,-cfg.honjinLossMorale);});
+      log(uname(u)+'が'+SIDE_NAME[hq.side]+'の本陣を占領（'+SIDE_NAME[hq.side]+'の全部隊の士気−'+cfg.honjinLossMorale+'）','kill');
+    }else if(own&&state.taken[u.side]){
+      state.history=[];state.taken[u.side]=false;
+      state.units.forEach(x=>{if(x.side===u.side)shiftMorale(x,cfg.honjinRetakeMorale);});
+      log(uname(u)+'が本陣を奪い返した（'+SIDE_NAME[u.side]+'の全部隊の士気+'+cfg.honjinRetakeMorale+'）','kill');
+    }
   }
   if(u.hidden){
     if(state.march==='normal')reveal(u,'通常行軍で姿を現した');
     else if(!onCover(u))reveal(u,'隠れ場所を出て姿を現した');
   }
-  if(inZoc(nq,nr,u.side)){u.mp=0;log(uname(u)+'が敵のZOCに入り停止','sys');}
+  if(inZoc(nq,nr,u.side)){u.mp=0;log(uname(u)+'が敵のZOCに入り停止','sys',privOf(u));}
   render();
   if(!u.hidden)return reactions(u);
 }
-function reveal(u,why){u.hidden=false;u.sprung=false;u.mark=null;state.history=[];log(uname(u)+'が'+why,'sys');}
+function reveal(u,why){u.hidden=false;u.sprung=false;u.mark=null;state.history=[];log(uname(u)+'が'+why,'sys',privOf(u));}
 function hideUnit(u){
   if(!canHide(u))return;
   pushHistory();u.mp=0;u.pending=true;
@@ -290,7 +378,7 @@ function attackStruct(a,p){
   if(state.phase!=='battle'||state.winner||a.side!==state.side||!canHitStruct(a,p))return;
   pushHistory();
   const k=key(p.q,p.r),t=structType(p),name=structName(p),dmg=structDamage(a),s=struct[k];
-  a.attacked=true;a.mp=0;
+  a.attacked=true;a.mp=0;if(!a.hidden)a.exposed=true;
   if(a.hidden&&!(a.type==='archer'&&dist(a,p)>=2))reveal(a,name+'を攻撃して姿を現した');
   s.hp-=dmg;
   log(uname(a)+' → '+name+'：'+dmg+'の損傷'+(s.hp>0?'（残り'+s.hp+'／'+maxOf(t)+'）':''));
@@ -299,7 +387,7 @@ function attackStruct(a,p){
   const g=unitAt(p.q,p.r);
   if(g&&g.side!==a.side&&!g.hidden&&!g.worked){
     const c=computeCounter(a,g,0);
-    if(c){const am=menOf(a);a.hp-=c.dmg;log('　反撃 '+uname(g)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');if(a.hp<=0)removeUnitDead(a);checkWinner();}
+    if(c){const am=menOf(a);a.hp-=c.dmg;shaken(a,am-menOf(a),false);log('　反撃 '+uname(g)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');if(a.hp<=0)removeUnitDead(a,g);checkWinner();}
   }
   render();
 }
@@ -327,35 +415,40 @@ function work(u,type){
   s.hp=Math.min(max,s.hp+workRate(u));
   u.mp=0;u.attacked=true;u.worked=true;
   if(u.hidden)reveal(u,'工事をして姿を現した');
-  if(s.hp>=max&&!s.done){s.done=true;log(uname(u)+'の'+name+'が完成','kill');}
-  else log(uname(u)+'が'+name+'を'+(repair?'修理':'工事')+'（'+s.hp+'／'+max+'）','sys');
+  if(s.hp>=max&&!s.done){s.done=true;log(uname(u)+'の'+name+'が完成','kill',privOf(u));}
+  else log(uname(u)+'が'+name+'を'+(repair?'修理':'工事')+'（'+s.hp+'／'+max+'）','sys',privOf(u));
   render();
 }
-function removeUnitDead(u){state.units=state.units.filter(x=>x!==u);log(uname(u)+'が壊滅','kill');}
+function removeUnitDead(u,by){
+  state.units=state.units.filter(x=>x!==u);log(uname(u)+'が壊滅','kill');
+  if(by&&state.units.includes(by))shiftMorale(by,cfg.killMorale);
+  state.units.forEach(x=>{if(x.side===u.side&&dist(x,u)<=2)shiftMorale(x,-cfg.allyLostMorale);});
+}
 function checkWinner(){['blue','red'].forEach(s=>{if(!state.winner&&!state.units.some(u=>u.side===s)){state.winner=s==='blue'?'red':'blue';log(SIDE_NAME[state.winner]+'の勝利','kill');}});}
 // 隠れた部隊からの攻撃。反撃は受けない。奇襲なら倍率がかかり、相手の隊列が乱れる。
 // 弓兵が2マス以上離れて射た場合は隠れたままで、相手には矢の来た方向だけが分かる
 function hiddenStrike(a,t,amb){
   const res=computeAttack(a,t,amb),tm=menOf(t);
   t.hp-=res.dmg;if(amb)t.dis=true;spillStruct(a,t);
-  const lost=tm-menOf(t),rest='残り'+Math.max(0,menOf(t))+'人',fx=amb?'（反撃なし・隊列乱れ）':'（反撃なし）';
+  const lost=tm-menOf(t);shaken(t,lost,true);
+  const rest='残り'+Math.max(0,menOf(t))+'人',fx=amb?'（反撃なし・隊列乱れ）':'（反撃なし）';
   if(a.type==='archer'&&dist(a,t)>=2){
     a.sprung=true;t.shotFrom=dirTo(t,a);
     log(uname(a)+'（伏兵）→ '+uname(t)+'：'+res.notes.join('、')+'、'+lost+'人減、'+rest+fx+'。隠れたまま','',a.side);
     log(uname(t)+'が'+DIR_NAME[t.shotFrom]+'の方向から矢を受けた：'+lost+'人減、'+rest+(amb?'（奇襲・隊列乱れ）':''),'kill',t.side);
   }else{
-    a.hidden=false;a.sprung=false;a.mark=null;
+    a.hidden=false;a.sprung=false;a.mark=null;a.exposed=true;
     log(uname(a)+'（伏兵）→ '+uname(t)+'：'+res.notes.join('、')+'、'+lost+'人減、'+rest+fx);
   }
-  if(t.hp<=0)removeUnitDead(t);
+  if(t.hp<=0)removeUnitDead(t,a);
   checkWinner();
 }
 // 奇襲をまだ使っていない隠れた部隊の攻撃範囲に敵が入ったら、奇襲するか見送るかを選ぶ
 async function reactions(m){
-  const hs=state.units.filter(h=>h.side!==m.side&&surprise(h)&&canStrike(h,m));
+  const hs=state.units.filter(h=>h.side!==m.side&&surprise(h)&&canStrike(h,m)&&spotted(m,h.side));
   for(const h of hs){
     if(state.winner||!state.units.includes(m)||!state.units.includes(h)||!surprise(h)||!canStrike(h,m))continue;
-    const go=(h.side==='red'&&aiRed)?aiWantsAmbush(h,m):await askAmbush(h,m);
+    const go=isAI(h.side)?aiWantsAmbush(h,m):await askAmbush(h,m);
     if(go){
       state.history=[];m.mp=0;
       if(!(h.type==='archer'&&dist(h,m)>=2))log('伏兵！ '+uname(h)+'が'+uname(m)+'を奇襲','kill');
@@ -372,7 +465,7 @@ function tryTurn(u,delta){
   if(u.mp<cost)return;
   pushHistory();
   u.f=(u.f+delta+6)%6;u.mp-=cost;
-  if(contact&&!u.dis){u.dis=true;log(uname(u)+'が接触中に旋回、隊列が乱れた','sys');}
+  if(contact&&!u.dis){u.dis=true;log(uname(u)+'が接触中に旋回、隊列が乱れた','sys',privOf(u));}
   render();
 }
 function doAttack(a,t){
@@ -380,16 +473,16 @@ function doAttack(a,t){
   pushHistory();
   if(a.hidden){a.attacked=true;a.mp=0;hiddenStrike(a,t,!a.sprung);state.history=[];render();return;}
   const res=computeAttack(a,t);
-  const tm=menOf(t),wk=t.worked;t.hp-=res.dmg;a.attacked=true;a.mp=0;if(wk)t.dis=true; // 工事中を襲われると隊列も乱れる
+  const tm=menOf(t),wk=t.worked;t.hp-=res.dmg;a.attacked=true;a.mp=0;a.exposed=true;if(wk)t.dis=true; // 工事中を襲われると隊列も乱れる
   log(uname(a)+' → '+uname(t)+'：'+res.notes.join('、')+'、'+(tm-menOf(t))+'人減、残り'+menOf(t)+'人'+(wk?'（反撃なし・隊列乱れ）':''));
-  spillStruct(a,t);
-  if(t.hp<=0){state.units=state.units.filter(u=>u!==t);log(uname(t)+'が壊滅','kill');}
+  spillStruct(a,t);shaken(t,tm-menOf(t),wk||res.cat==='斜め後ろ'||res.cat==='真後ろ');
+  if(t.hp<=0)removeUnitDead(t,a);
   else{
     const c=t.worked?null:computeCounter(a,t,0); // 工事中の部隊は反撃できない
     if(c){
-      const am=menOf(a);a.hp-=c.dmg;
+      const am=menOf(a);a.hp-=c.dmg;shaken(a,am-menOf(a),false);
       log('　反撃 '+uname(t)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');
-      if(a.hp<=0){state.units=state.units.filter(u=>u!==a);log(uname(a)+'が壊滅','kill');}
+      if(a.hp<=0)removeUnitDead(a,t);
     }
   }
   checkWinner();
@@ -405,53 +498,96 @@ function endTurn(){
     if(!onCover(u)||inContact(u)){log(uname(u)+'は隠れられなかった','sys',u.side);return;}
     u.sprung=false;
     if(u.hidden){log(uname(u)+'が改めて身を潜めた（次の攻撃は奇襲になる）','sys',u.side);return;}
-    u.hidden=true;u.mark={q:u.q,r:u.r};
+    const was=spotted(u,other);u.hidden=true;u.mark={q:u.q,r:u.r};
     log(uname(u)+'が隠れた','sys',u.side);
-    log(SIDE_NAME[u.side]+'の'+cfg.units[u.type].name+'が姿を消した','sys',other);
+    if(was)log(SIDE_NAME[u.side]+'の'+cfg.units[u.type].name+'が姿を消した','sys',other);
   });
   state.side=state.side==='blue'?'red':'blue';
   if(state.side==='blue')state.turn++;
   state.selected=null;state.history=[];
   log('第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番','sys');startSide(state.side);render(); // 回復は手番の見出しのあとに記録
-  if(state.side==='red'&&aiRed)setTimeout(runAI,350);
+  if(isAI(state.side))setTimeout(runAI,350);
 }
 
 /* ---- AI (red) ---- */
-let aiRed=true,busy=false,gen=0;
+let aiRed=true,aiBlue=false,busy=false,gen=0; // aiBlue＝青軍もAIに任せる（AI同士の検証用。画面からは切り替えない）
+const isAI=side=>side==='red'?aiRed:aiBlue;
+const styleOf=side=>side==='red'?state.aiStyle:(state.aiStyleBlue||'ambush');
+let aiPick='map';try{const p=localStorage.getItem('hex-ai-pick');if(p==='map'||p==='random'||p in AI_STYLES)aiPick=p;}catch(e){}
+// 作戦ごとの重み：atk＝攻撃の得、counter＝反撃で受ける損害、threat＝狙われる危険、stealth＝隠密（0なら隠れない）、
+// near＝最も近い敵へ寄る強さ、hq＝敵の本陣へ向かう強さ、ground＝守りやすい場所を取る強さ
+const AI_W={
+  rush:   {atk:1.2,counter:0.6,threat:0.3,stealth:0,  near:2,  hq:4,  ground:0},
+  careful:{atk:1,  counter:2,  threat:2,  stealth:0.5,near:1,  hq:0.5,ground:1},
+  ambush: {atk:1,  counter:1,  threat:1,  stealth:1.5,near:3,  hq:1,  ground:0},
+  hold:   {atk:1,  counter:1.2,threat:1.2,stealth:0.5,near:1.5,hq:0.5,ground:3},
+};
+// 立っている場所の守りやすさ（地形と拠点の防御倍率、高所の見晴らし）。上限つき
+function groundVal(p,side){
+  const f=featOf(p),st=structType(p);
+  const fd=st?(f.side&&f.side!==side?1:1+(fullDef(p)-1)*ratioOf(p)):f?.type==='village'?cfg.villageDef:f?.type==='honjin'&&f.side===side&&!state.taken[side]?cfg.honjinDef:1;
+  return Math.min(40,(terCfg(p).def*fd-1)*20+(terOf(p)==='hill'||terOf(p)==='mountain'?3:0));
+}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const nearestDist=(u,list)=>list.reduce((m,e)=>Math.min(m,dist(u,e)),Infinity);
+// AIが「相手に見られていそうだ」と考えるマス。知っている敵（見えている部隊と、最後に見た位置）だけから推測する
+// 最後に見た位置の敵は向きが分からないので、全方向に前方の視界があるとみなす。何も知らなければ、相手の本陣の周りを見張られているとみなす
+function estVis(side){
+  const out=new Set(),add=v=>v.forEach(k=>out.add(k)),foe=other(side);
+  const known=state.units.filter(e=>e.side===foe&&spotted(e,side));
+  known.forEach(e=>add(sightOf(e)));
+  const guess=Object.entries(state.memo[side]||{}).filter(([id])=>!known.some(e=>e.id===+id)).map(([,m])=>m);
+  if(!known.length&&!guess.length){const hq=honjinOf(foe);if(hq)guess.push(hq);}
+  guess.forEach(m=>add(sightOf({q:m.q,r:m.r,f:0},true)));
+  return out;
+}
+// 1部隊の計画。1マスごとに隠蔽行軍（隠れ場所の中だけ、遅い）か通常行軍（速いが隠蔽が解ける）を選び、
+// 手番の終わりに隠れ直す手も比べる。隠れていた部隊が、相手に見られていそうなマスで姿をさらすのは損とみる
 function planFor(u){
   // 隠れた敵は知らないものとして考える
-  const occ=new Set(state.units.filter(o=>o!==u&&!(o.side!==u.side&&o.hidden)).map(o=>key(o.q,o.r)));
-  const enemies=state.units.filter(e=>e.side!==u.side&&!e.hidden);
-  const sk=s=>s.q+','+s.r+','+s.f+','+(s.dis?1:0);
-  const start={q:u.q,r:u.r,f:u.f,mp:u.mp,dis:u.dis,prev:null,act:null};
+  const occ=new Set(state.units.filter(o=>o!==u&&(o.side===u.side||spotted(o,u.side))).map(o=>key(o.q,o.r)));
+  const enemies=state.units.filter(e=>e.side!==u.side&&spotted(e,u.side));
+  const ctx={enemies,est:estVis(u.side),
+    lure:enemies.concat(Object.values(state.memo[u.side]||{}))}; // 近くで待ち伏せる価値のある相手（最後に見た位置も含む）
+  const sk=s=>s.q+','+s.r+','+s.f+','+(s.dis?1:0)+(s.hid?1:0)+(s.seen?1:0);
+  const start={q:u.q,r:u.r,f:u.f,mp:u.mp,dis:u.dis,hid:u.hidden,seen:false,prev:null,act:null};
   const best=new Map([[sk(start),start]]);const queue=[start];
   while(queue.length){
     let bi=0;for(let i=1;i<queue.length;i++)if(queue[i].mp>queue[bi].mp)bi=i;
     const s=queue.splice(bi,1)[0];if(best.get(sk(s))!==s)continue;
     const push=n=>{const k=sk(n),o=best.get(k);if(!o||o.mp<n.mp){best.set(k,n);queue.push(n);}};
     const contact=enemies.some(e=>dist(e,s)===1),tc=contact?cfg.contactTurnCost:cfg.turnCost;
-    if(s.mp>=tc)[-1,1].forEach(dl=>push({q:s.q,r:s.r,f:(s.f+dl+6)%6,mp:s.mp-tc,dis:s.dis||contact,prev:s,act:{t:'turn',dl}}));
+    if(s.mp>=tc)[-1,1].forEach(dl=>push({...s,f:(s.f+dl+6)%6,mp:s.mp-tc,dis:s.dis||contact,prev:s,act:{t:'turn',dl}}));
     for(let d=0;d<6;d++){
       const nq=s.q+DIRS[d][0],nr=s.r+DIRS[d][1],k=key(nq,nr);
       if(!cells.has(k)||occ.has(k))continue;
-      const cost=moveCost(s,d);if(s.mp<cost)continue;
-      const rel=(d-s.f+6)%6,zoc=inZoc(nq,nr,u.side);
-      push({q:nq,r:nr,f:(rel===1||rel===5)?d:s.f,mp:zoc?0:s.mp-cost,dis:s.dis,prev:s,act:{t:'move',d}});
+      const base=moveCost(s,d),rel=(d-s.f+6)%6,f=(rel===1||rel===5)?d:s.f,zoc=inZoc(nq,nr,u.side);
+      if(s.hid&&onCover({q:nq,r:nr})&&s.mp>=base+cfg.hideMove) // 隠蔽行軍
+        push({...s,q:nq,r:nr,f,mp:zoc?0:s.mp-base-cfg.hideMove,prev:s,act:{t:'move',d,hide:true}});
+      if(s.mp>=base) // 通常行軍（隠れていたなら、ここで姿を現す）
+        push({...s,q:nq,r:nr,f,mp:zoc?0:s.mp-base,hid:false,seen:s.seen||(u.hidden&&ctx.est.has(k)),prev:s,act:{t:'move',d,hide:false}});
     }
   }
   let top=null;
-  best.forEach(s=>{const ev=evalState(u,s,enemies);if(!top||ev.score>top.score)top={...ev,s};});
+  best.forEach(s=>{
+    const cand=[evalState(u,s,ctx,false)];
+    // 手番の終わりに隠れ直す（隠れ場所で、移動力が残っていて、敵と接していないとき）
+    if((AI_W[styleOf(u.side)]||AI_W.ambush).stealth>0&&(!s.hid||u.sprung)&&onCover(s)&&s.mp>=cfg.hideCost&&!enemies.some(e=>dist(e,s)===1))cand.push(evalState(u,s,ctx,true));
+    cand.forEach(ev=>{if(!top||ev.score>top.score)top={...ev,s};});
+  });
   const acts=[];for(let s=top.s;s.prev;s=s.prev)acts.unshift(s.act);
-  return {acts,target:top.target};
+  return {acts,target:top.target,hide:top.hide};
 }
-function evalState(u,s,enemies){
-  const V={q:s.q,r:s.r,f:s.f,type:u.type,hp:u.hp,dis:s.dis,side:u.side,attacked:false};
+function evalState(u,s,ctx,hideEnd){
+  const {enemies,est,lure}=ctx,W=AI_W[styleOf(u.side)]||AI_W.ambush;
+  const V={q:s.q,r:s.r,f:s.f,type:u.type,hp:u.hp,dis:s.dis,side:u.side,attacked:false,hidden:s.hid,sprung:s.hid&&u.sprung};
   const pct=(n,x)=>n*100/maxHp(x);
   let atkVal=0,target=null,kills=false;
-  enemies.forEach(t=>{if(canAttack(V,t)){const r=computeAttack(V,t),k=r.dmg>=t.hp,c=k||t.worked?null:computeCounter(V,t,r.dmg);
-    let v=pct(Math.min(r.dmg,t.hp),t)+(k?35:0);if(c)v-=pct(Math.min(c.dmg,u.hp),u)+(c.dmg>=u.hp?35:0);if(v>atkVal){atkVal=v;target=t;kills=k;}}});
+  // 伏兵の攻撃は奇襲の倍率がかかり、反撃を受けない。隠れ直すなら攻撃はしない
+  if(!hideEnd)enemies.forEach(t=>{if(canAttack(V,t)){const r=computeAttack(V,t,surprise(V)),k=r.dmg>=t.hp,c=k||t.worked||V.hidden?null:computeCounter(V,t,r.dmg);
+    let v=(pct(Math.min(r.dmg,t.hp),t)+(k?35:0))*W.atk;if(c)v-=(pct(Math.min(c.dmg,u.hp),u)+(c.dmg>=u.hp?35:0))*W.counter;if(v>atkVal){atkVal=v;target=t;kills=k;}}});
+  // 隠れて手番を終えるなら、狙われる危険は小さい（近接で攻撃すると姿を現す）
+  const concealed=hideEnd||(s.hid&&!(target&&!(u.type==='archer'&&dist(V,target)>=2)));
   let threat=0;
   enemies.forEach(e=>{
     if(kills&&e===target)return;
@@ -461,42 +597,54 @@ function evalState(u,s,enemies){
     if(e.type==='cav'&&d>=2&&dm<cfg.side){dmg=dmg*cfg.side/dm;dm=cfg.side;} // 騎兵は回り込んでくると想定
     const front=dmg/dm;threat+=front*0.12+(dmg-front)*0.6;
   });
-  const near=nearestDist(V,enemies);
-  let pos=u.type==='archer'?-Math.abs(near-3)*3-(near===1?10:0):-near*3;
-  const hq=honjinOf(u.side==='red'?'blue':'red');
-  if(hq){if(V.q===hq.q&&V.r===hq.r)pos+=1000;else if(u.type!=='archer')pos-=dist(V,hq)*1.5;} // 敵の本陣を目指す
-  return {score:atkVal-threat+pos,target};
+  if(concealed)threat*=0.25;
+  let stealth=0;
+  if(s.seen)stealth-=12; // 隠れていたのに、見られていそうなところで姿をさらした
+  if(hideEnd&&!s.hid&&est.has(key(s.q,s.r)))stealth-=6; // 見られながら隠れると、隠れた場所を知られる
+  if(concealed&&lure.some(e=>dist(e,V)<=4))stealth+=6; // 敵の近くで隠れて待つ
+  // 見えている敵がいなければ、最後に見た位置、それもなければ敵の本陣へ向かう
+  const goals=enemies.length?enemies:Object.values(state.memo[u.side]||{}).concat(honjinOf(other(u.side))||[]);
+  const near=goals.length?nearestDist(V,goals):0;
+  let pos=(u.type==='archer'?-Math.abs(near-3)*3-(near===1?10:0):-near*3)*W.near/3;
+  const hq=honjinOf(other(u.side));
+  if(hq){if(V.q===hq.q&&V.r===hq.r)pos+=state.taken[other(u.side)]?20:80;else if(u.type!=='archer')pos-=dist(V,hq)*W.hq;} // 敵の本陣を目指す
+  return {score:atkVal-threat*W.threat+stealth*W.stealth+pos+groundVal(V,u.side)*W.ground,target:hideEnd?null:target,hide:hideEnd};
 }
 function aiWantsAmbush(h,m){
   const r=computeAttack(h,m,true);
-  return r.dmg>=m.hp||r.dm>1||lossOf(m,r.dmg)>=Math.max(1,menOf(m)*0.25); // 大きく削れるときだけ奇襲し、あとは見送る
+  return r.dmg>=m.hp||r.cat==='斜め後ろ'||r.cat==='真後ろ'||lossOf(m,r.dmg)>=Math.max(1,menOf(m)*0.25); // 大きく削れるときだけ奇襲し、あとは見送る
 }
-const aiShouldHide=(u,en)=>canHide(u)&&nearestDist(u,en)<=6;
 async function runAI(){
-  if(busy||state.winner||state.side!=='red'||state.phase!=='battle')return;
+  const side=state.side;
+  if(busy||state.winner||!isAI(side)||state.phase!=='battle')return;
   busy=true;const g=gen;
-  const enemies=()=>state.units.filter(e=>e.side==='blue'&&!e.hidden);
-  const order=state.units.filter(u=>u.side==='red').sort((a,b)=>nearestDist(a,enemies())-nearestDist(b,enemies()));
+  const enemies=()=>state.units.filter(e=>e.side!==side&&spotted(e,side));
+  const order=state.units.filter(u=>u.side===side).sort((a,b)=>nearestDist(a,enemies())-nearestDist(b,enemies()));
   for(const u of order){
     if(g!==gen||state.winner)break;
     if(!state.units.includes(u))continue;
-    if(u.hidden){ // 伏兵はその場で待ち、狙える敵がいれば攻撃する
-      const ts=enemies().filter(t=>canAttack(u,t)).map(t=>({t,v:lossOf(t,computeAttack(u,t,surprise(u)).dmg)})).sort((a,b)=>b.v-a.v);
-      if(ts.length){state.selected=u.id;render();await sleep(220);doAttack(u,ts[0].t);await sleep(380);}
-      else if(aiShouldHide(u,enemies()))hideUnit(u);
-      continue;
+    let plan=planFor(u);state.selected=u.id;render();await sleep(220);
+    // 途中で新しく敵を見つけたら、そこで考え直す（3回まで）
+    for(let round=0;round<3;round++){
+      let again=false;
+      for(const a of plan.acts){if(g!==gen||!state.units.includes(u)||state.winner)break;
+        const n=enemies().length,q=u.q,r=u.r,f=u.f,pm=state.march;
+        if(a.t==='move'){state.march=a.hide?'hidden':'normal';await tryMove(u,a.d);state.march=pm;}else tryTurn(u,a.dl);
+        await sleep(140);
+        if(u.q===q&&u.r===r&&u.f===f){again=true;break;} // 動けなかった（見えていなかった部隊にぶつかった等）
+        if(enemies().length>n){again=true;break;}
+      }
+      if(!again||g!==gen||!state.units.includes(u)||state.winner||u.mp<=0)break;
+      plan=planFor(u);
     }
-    const plan=planFor(u);state.selected=u.id;render();await sleep(220);
-    if(!plan.target&&aiShouldHide(u,enemies())){hideUnit(u);await sleep(220);continue;}
-    for(const a of plan.acts){if(g!==gen||!state.units.includes(u)||state.winner)break;if(a.t==='move')await tryMove(u,a.d);else tryTurn(u,a.dl);await sleep(140);}
     if(g!==gen)break;
     if(!state.units.includes(u))continue;
     if(state.winner)break;
-    if(plan.target&&state.units.includes(plan.target)&&canAttack(u,plan.target)){doAttack(u,plan.target);await sleep(380);}
+    if(plan.hide){if(canHide(u))hideUnit(u);await sleep(220);}
+    else if(plan.target&&state.units.includes(plan.target)&&canAttack(u,plan.target)){doAttack(u,plan.target);await sleep(380);}
     else{
       const f=[...cells.values()].find(c=>canHitStruct(u,c)&&fenceAt(c)&&cfg.fenceVs[u.type]>=1); // 行く手の柵は、壊しやすい兵種で壊す
       if(f){attackStruct(u,f);await sleep(380);}
-      else if(aiShouldHide(u,enemies()))hideUnit(u);
     }
   }
   if(g!==gen)return;
@@ -506,7 +654,7 @@ async function runAI(){
 function undo(){
   if(busy||state.prompt)return;
   const s=state.history.pop();if(!s)return;
-  const o=JSON.parse(s);state.units=o.units;struct=o.struct||{};state.log.length=o.logLen;state.winner=o.winner;
+  const o=JSON.parse(s);state.units=o.units;struct=o.struct||{};state.log.length=o.logLen;state.winner=o.winner;state.taken=o.taken||{blue:false,red:false};
   featureAt.forEach((f,k)=>{if(f.built&&!(k in struct))featureAt.delete(k);}); // 取り消した工事
   if(state.selected!=null&&!byId(state.selected))state.selected=null;render();
 }
@@ -515,6 +663,7 @@ function undo(){
 const svg=document.getElementById('board');
 function render(){
   svg.setAttribute('viewBox',VB.join(' ')); // 盤の大きさはマップごと
+  updateMemo();
   const v=viewer();
   let sel=state.selected!=null?byId(state.selected):null;
   if(sel&&!seen(sel,v))sel=null;
@@ -526,7 +675,14 @@ function render(){
     cells.forEach((c,k)=>{if(canHitStruct(sel,c))structTargets.set(k,structName(c)+' −'+structDamage(sel));});
     state.units.forEach(t=>{if(canAttack(sel,t)&&seen(t,v)){const r=computeAttack(sel,t,surprise(sel)),c=(r.dmg>=t.hp||sel.hidden||t.worked)?null:computeCounter(sel,t,r.dmg);targets.set(key(t.q,t.r),{...r,loss:lossOf(t,r.dmg),closs:c?lossOf(sel,c.dmg):0});}});
   }
-  let h=boardSVG({hp:struct,max:{fence:cfg.fenceHp,jinchi:cfg.jinchiHp,fort:cfg.fortHp}})+'<g>';
+  let h=boardSVG({hp:struct,max:{fence:cfg.fenceHp,jinchi:cfg.jinchiHp,fort:cfg.fortHp}});
+  if(useFog&&v){ // 見えていないマスを暗くする（配置中も、相手の部隊は見える範囲だけ）
+    const vis=visOf(v);h+='<g style="pointer-events:none">';
+    cells.forEach((c,k)=>{if(!vis.has(k))h+='<polygon class="fog" points="'+hexPts(c.x,c.y)+'"/>';});
+    h+='</g>';
+  }
+  ['blue','red'].forEach(s=>{const p=state.taken[s]&&honjinOf(s);if(p){const c=cells.get(key(p.q,p.r));if(c)h+='<text class="lbl taken" x="'+c.x+'" y="'+(c.y-S*K*0.95).toFixed(1)+'">占領</text>';}}); // 占領された本陣
+  h+='<g>';
   cells.forEach((c,k)=>{
     let cls='cell';
     if(state.phase==='setup'&&sel&&deployable(sel)&&inZone(sel.side,c.q,c.r)&&!unitAt(c.q,c.r)&&!cavBlocked(sel.type,c))cls+=' move';
@@ -540,10 +696,10 @@ function render(){
   h+='</g><g>';
   moves.forEach((m,k)=>{const c=cells.get(k);h+='<text class="lbl" x="'+c.x+'" y="'+c.y+'">'+m.c+'</text>';});
   h+='</g><g>';
-  // 敵が最後に見た位置の「？」
-  if(v)state.units.forEach(u=>{
-    if(u.side===v||!u.hidden||!u.mark||seenAt(u.mark.q,u.mark.r))return;
-    const c=cells.get(key(u.mark.q,u.mark.r));if(!c)return;
+  // 見失った敵を最後に見た位置の「？」
+  if(v&&state.phase==='battle')Object.entries(state.memo[v]).forEach(([id,m])=>{
+    const u=byId(+id);if(!u||spotted(u,v)||seenAt(m.q,m.r))return;
+    const c=cells.get(key(m.q,m.r));if(!c)return;
     h+='<g class="mark unit side-'+u.side+'" transform="translate('+c.x+','+c.y+')"><path class="totsu" d="'+TOTSU+'"/><text class="ulabel" x="0" y="0">？</text></g>';
   });
   state.units.forEach(u=>{
@@ -555,6 +711,7 @@ function render(){
     h+='<g transform="rotate('+(SANG[u.f]+90).toFixed(1)+')"><path class="totsu" d="'+TOTSU+'"/></g>';
     h+='<text class="ulabel" x="0" y="0">'+U.ch+'</text>';
     h+='<rect class="hpbg" x="-14" y="17" width="28" height="3"/><rect class="hp" x="-14" y="17" height="3" width="'+(28*Math.max(0,u.hp)/maxHp(u)).toFixed(1)+'"/>';
+    h+='<rect class="hpbg" x="-14" y="21" width="28" height="2"/><rect class="mor'+(moraleOf(u)<cfg.desertLine?' low':'')+'" x="-14" y="21" height="2" width="'+(28*moraleOf(u)/100).toFixed(1)+'"/>'; // 士気
     if(u.dis)h+='<text class="dis" x="14" y="-12">乱</text>';
     if(u.hidden||u.pending)h+='<text class="badge'+(u.pending?' pend':'')+'" x="-20" y="-12">伏</text>';
     if(u.shotFrom!=null){ // 矢の来た方向を示す矢印（向きだけで、距離は分からない）
@@ -580,7 +737,7 @@ function terLabel(p){
 function featLabel(p){
   const f=featOf(p);if(!f)return '';
   const pc=x=>Math.round(x*100)+'%';
-  if(f.type==='honjin')return SIDE_NAME[f.side]+'の本陣（'+SIDE_NAME[f.side]+'の防御×'+cfg.honjinDef+'、手番ごとに'+pc(cfg.honjinHeal)+'回復、敵が入ると'+SIDE_NAME[f.side]+'の負け）';
+  if(f.type==='honjin')return SIDE_NAME[f.side]+'の本陣（'+SIDE_NAME[f.side]+'の防御×'+cfg.honjinDef+'、手番ごとに'+pc(cfg.honjinHeal)+'回復、敵に占領されると全部隊の士気−'+cfg.honjinLossMorale+'）'+(state.taken[f.side]?'【占領されている】':'');
   if(STRUCTS.includes(f.type)){
     const t=structType(p),s=struct[key(p.q,p.r)],name=structName(p);if(!t)return '壊れた'+name;
     const eff=fmt(1+(fullDef(p)-1)*ratioOf(p)),hp=s.hp+'／'+maxOf(t);
@@ -594,6 +751,10 @@ function renderPanel(sel,mine,v){
   if(state.phase==='setup'){
     tb.innerHTML='<div class="turn">配置</div><p class="hint" style="margin-top:.4rem">黄色のマスへ動かせます（Q／E で向き）</p>'+
       '<div class="row"><label class="chk">マップ <select id="selMap">'+loadMaps().maps.map(m=>'<option value="'+m.id+'"'+(m.id===state.mapId?' selected':'')+'>'+esc(m.name)+'</option>').join('')+'</select></label><button class="ghost" id="bMaps">マップ編集</button></div>'+
+      (aiRed?(()=>{const ma=findMap(loadMaps(),state.mapId).ai||'random',nm=k=>k==='random'?'ランダム':AI_STYLES[k];
+        return '<div class="row"><label class="chk">赤軍のAI <select id="selAi"><option value="map">マップの設定（'+nm(ma)+'）</option><option value="random">ランダム（決着まで伏せる）</option>'+
+          Object.entries(AI_STYLES).map(([k,n])=>'<option value="'+k+'"'+(aiPick===k?' selected':'')+'>'+n+'</option>').join('')+'</select></label></div>'+
+          (aiPick in AI_STYLES?'<p class="hint">'+AI_STYLE_DESC[aiPick]+'</p>':'');})():'')+
       '<div class="row"><button id="bStart"'+(canStart()?'':' disabled')+'>戦闘開始</button><button class="ghost" id="bFormReset">マップの初期配置に戻す</button><button class="ghost" id="bCfg2">数値調整</button><button class="ghost" id="bMan2">説明書</button></div>';
     const sum=side=>{const us=state.units.filter(u=>u.side===side);return '<dt>'+SIDE_NAME[side]+'</dt><dd>'+(us.length?us.length+'部隊・'+sideMen(side)+'人':'部隊なし')+'</dd>';};
     let h='<dl style="margin-top:0">'+sum('blue')+sum('red')+'</dl>';
@@ -612,6 +773,7 @@ function renderPanel(sel,mine,v){
     document.getElementById('bMan2').onclick=openManual;
     document.getElementById('bMaps').onclick=openMaps;
     document.getElementById('selMap').onchange=e=>selectMap(e.target.value);
+    const sa=document.getElementById('selAi');if(sa){sa.value=aiPick;sa.onchange=()=>{aiPick=sa.value;try{localStorage.setItem('hex-ai-pick',aiPick);}catch(e){}render();};}
     renderLog(null);
     return;
   }
@@ -628,14 +790,14 @@ function renderPanel(sel,mine,v){
     renderLog(v);return;
   }
   if(state.winner){
-    tb.innerHTML='<div class="turn side-'+state.winner+'">'+SIDE_NAME[state.winner]+'の勝利</div><div class="row"><button id="bNew">もう一度</button><button class="ghost" id="bUndo"'+(state.history.length?'':' disabled')+'>取り消し</button><button class="ghost" id="bEdit">配置からやり直す</button><button class="ghost" id="bCfg">数値調整</button></div>';
+    tb.innerHTML='<div class="turn side-'+state.winner+'">'+SIDE_NAME[state.winner]+'の勝利</div>'+(aiRed&&state.aiStyle?'<p class="hint" style="margin-top:.2rem">赤軍の作戦：'+(state.aiSecret&&!state.winner?'？（決着まで伏せる）':AI_STYLES[state.aiStyle])+'</p>':'')+'<div class="row"><button id="bNew">もう一度</button><button class="ghost" id="bUndo"'+(state.history.length?'':' disabled')+'>取り消し</button><button class="ghost" id="bEdit">配置からやり直す</button><button class="ghost" id="bCfg">数値調整</button></div>';
   }else{
     tb.innerHTML='<div class="turn side-'+state.side+'">第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番</div>'+
-      '<p class="hint" style="margin-top:.2rem">マップ：'+esc(state.mapName)+'</p>'+
+      '<p class="hint" style="margin-top:.2rem">マップ：'+esc(state.mapName)+'</p>'+(aiRed&&state.aiStyle?'<p class="hint" style="margin-top:.2rem">赤軍の作戦：'+(state.aiSecret&&!state.winner?'？（決着まで伏せる）':AI_STYLES[state.aiStyle])+'</p>':'')+
       (busy?'<p class="hint" style="margin-top:.4rem">赤軍が行動中です…</p>':'')+
       '<div class="row"><button id="bEnd"'+(busy?' disabled':'')+'>ターン終了</button><button class="ghost" id="bUndo"'+(state.history.length&&!busy?'':' disabled')+'>取り消し</button><button class="ghost" id="bNew">最初から</button></div>'+
       '<div class="row"><button class="ghost" id="bEdit"'+(busy?' disabled':'')+'>配置からやり直す</button><button class="ghost" id="bMaps2">マップ編集</button><button class="ghost" id="bCfg">数値調整</button><button class="ghost" id="bMan">説明書</button></div>'+
-      '<div class="row"><label class="chk"><input type="checkbox" id="cAi"'+(aiRed?' checked':'')+'> 赤軍をAIに任せる</label><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label></div>';
+      '<div class="row"><label class="chk"><input type="checkbox" id="cAi"'+(aiRed?' checked':'')+'> 赤軍をAIに任せる</label><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label><label class="chk"><input type="checkbox" id="cFog"'+(useFog?' checked':'')+'> 視界（索敵）</label></div>';
   }
   const ch=state.choice&&sel&&mine?state.choice:null,cu=ch&&seenAt(ch.q,ch.r);
   if(ch&&cu&&canAttack(sel,cu)&&canHitStruct(sel,ch)){
@@ -655,6 +817,7 @@ function renderPanel(sel,mine,v){
     if(sel.shotFrom!=null)st.push(DIR_NAME[sel.shotFrom]+'の方向から矢を受けた');if(contact)st.push('接触中');if(sel.dis)st.push('隊列乱れ（攻防×'+cfg.disorder+'）');if(sel.attacked)st.push('攻撃済み');
     ub.innerHTML='<div class="uname">'+uname(sel)+'</div><dl>'+
       '<dt>兵数</dt><dd>'+menOf(sel)+' / '+sel.men0+'人</dd>'+
+      '<dt>士気</dt><dd>'+moraleOf(sel)+(moraleOf(sel)<cfg.desertLine?'（脱走が出ている）':'')+'</dd>'+
       '<dt>移動力</dt><dd>'+(sel.side===state.side?sel.mp:U.mp)+' / '+U.mp+'</dd>'+
       '<dt>攻撃／防御（1人）</dt><dd>'+U.atk+' / '+U.def+'</dd>'+
       '<dt>射程</dt><dd>'+(U.rmin===U.rmax?U.rmin:U.rmin+'〜'+U.rmax)+'</dd>'+
@@ -677,6 +840,7 @@ function renderPanel(sel,mine,v){
   on('bHide',()=>hideUnit(sel));on('bFence',()=>work(sel,'fence'));on('bFort',()=>work(sel,'jinchi'));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
   const ai=document.getElementById('cAi');if(ai)ai.onchange=()=>{aiRed=ai.checked;if(aiRed&&state.side==='red'&&state.phase==='battle')runAI();};
   const z=document.getElementById('cZoc');if(z)z.onchange=()=>{showZoc=z.checked;render();};
+  const fg=document.getElementById('cFog');if(fg)fg.onchange=()=>{useFog=fg.checked;try{localStorage.setItem('hex-fog',useFog?'1':'0');}catch(e){}state.history=[];render();};
   renderLog(v);
 }
 function renderLog(v){

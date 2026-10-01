@@ -64,6 +64,10 @@ function loadMaps(){
 function saveMaps(db){try{localStorage.setItem(MAPS_STORE,JSON.stringify({current:db.current,maps:db.maps.filter(m=>!m.builtin)}));}catch(e){}}
 const isObj=o=>o&&typeof o==='object'&&!Array.isArray(o);
 const UNIT_TYPES=['spear','cav','archer'];
+// 赤軍AIの作戦（マップごとに決められる。random＝戦闘ごとにランダムに選び、決着まで伏せる）
+const AI_STYLES={rush:'猛進',careful:'慎重',ambush:'伏兵',hold:'要地'};
+const AI_STYLE_DESC={rush:'隠れずに敵の本陣の占領を狙う。多少の損害は気にしない',careful:'危険を避け、不利な戦いはしない。隙を見せた敵を叩く',
+  ambush:'敵の視界の外を回り込み、隠れて奇襲を狙う',hold:'丘・森・砦・村など守りやすい場所を取り、迎え撃つ'};
 // 保存データや読み込んだデータを正しい形に整える
 function cleanMap(m){
   const clamp=(v,a,b,d)=>{v=Math.round(Number(v));return v>=a&&v<=b?v:d;};
@@ -83,6 +87,7 @@ function cleanMap(m){
   });
   // 中央を失った砦のかけらは消す
   Object.keys(out.features).forEach(k=>{const f=out.features[k];if(f.type==='fort'&&out.features[f.fid]?.part!=='core')delete out.features[k];});
+  if(m.ai==='random'||m.ai in AI_STYLES)out.ai=m.ai;
   if(isObj(m.zones)){out.zones={};Object.entries(m.zones).forEach(([k,z])=>{if(inside(k)&&(z==='blue'||z==='red'))out.zones[k]=z;});}
   if(Array.isArray(m.units))m.units.forEach(u=>{
     if(!u||!UNIT_TYPES.includes(u.type)||(u.side!=='blue'&&u.side!=='red'))return;

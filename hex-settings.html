@@ -58,8 +58,10 @@ textarea{width:100%;min-height:9rem;font-family:ui-monospace,Menlo,monospace;fon
 <script src="hex-config.js"></script>
 <script>
 const GROUPS=[
-  ['戦闘',['base','side','rear','disorder','counter','spearFrontDef','cavForest']],
+  ['戦闘',['base','obliqueAtk','obliqueDef','side','rear','disorder','counter','spearFrontDef','cavForest']],
   ['移動と旋回',['mvF','mvFD','mvRD','mvR','turnCost','contactTurnCost']],
+  ['士気',['moraleRecover','desertLine','desertMax','lossMorale','flankMorale','killMorale','allyLostMorale','honjinLossMorale','honjinOccupiedMorale','honjinRetakeMorale'],'士気は部隊ごとに0〜100。脱走は、士気が下がるほど増えます（士気0で最大）。'],
+  ['視界',['visFront','visRear','visHigh'],'前方は攻撃できる向き（左右90°まで）。森・山は視線をさえぎり、森の中は隣からしか見えません。ゲーム画面の「視界（索敵）」で切り替えられます。'],
   ['伏兵',['ambush','hideCost','hideMove']],
   ['本陣・村',['honjinDef','honjinHeal','villageDef','villageHeal'],'回復は、敵と接していないとき自軍の手番のはじめに、最初の兵数に対する割合で行われます。'],
   ['陣地・砦',['jinchiDef','jinchiHp','fortCoreDef','fortRingDef','fortHp','fortMove'],'防御倍率は、耐久の割合に応じて効きます（作りかけ・壊れかけは弱い）。二乗則では、防御 ×D を落とすのに √D 倍の兵力が要ります。'],
