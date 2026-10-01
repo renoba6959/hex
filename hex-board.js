@@ -193,3 +193,33 @@ function boardSVG(st){
   return h+'</g>';
 }
 const dist=(a,b)=>{const dq=a.q-b.q,dr=a.r-b.r;return (Math.abs(dq)+Math.abs(dr)+Math.abs(dq+dr))/2;};
+
+/* ---- 盤の拡大・縮小（ゲーム画面・マップ編集で共通） ---- */
+// 盤の右下に −／＋ を置く。拡大すると盤の中をスクロールして見る。倍率は画面ごとに覚えておく
+const ZOOMS=[1,1.25,1.5,2,2.5,3,4,5,6];
+function setupZoom(wrap,svg,store){
+  const box=document.createElement('div');box.className='board-box';
+  wrap.parentNode.insertBefore(box,wrap);box.appendChild(wrap);
+  const ui=document.createElement('div');ui.className='zoom';
+  ui.innerHTML='<button class="ghost" data-z="-1" aria-label="縮小" title="縮小（−）">−</button><span class="zoom-v"></span><button class="ghost" data-z="1" aria-label="拡大" title="拡大（＋）">＋</button>';
+  box.appendChild(ui);
+  let i=0;try{const z=+localStorage.getItem(store);if(ZOOMS.includes(z))i=ZOOMS.indexOf(z);}catch(e){}
+  const apply=keep=>{
+    // 拡大・縮小しても、見ていた場所が真ん中に残るようにする
+    const cx=(wrap.scrollLeft+wrap.clientWidth/2)/(wrap.scrollWidth||1),cy=(wrap.scrollTop+wrap.clientHeight/2)/(wrap.scrollHeight||1);
+    svg.style.width=ZOOMS[i]*100+'%';svg.style.minWidth=600*ZOOMS[i]+'px';
+    if(keep){wrap.scrollLeft=cx*wrap.scrollWidth-wrap.clientWidth/2;wrap.scrollTop=cy*wrap.scrollHeight-wrap.clientHeight/2;}
+    ui.querySelector('.zoom-v').textContent=Math.round(ZOOMS[i]*100)+'%';
+    ui.querySelector('[data-z="-1"]').disabled=i===0;ui.querySelector('[data-z="1"]').disabled=i===ZOOMS.length-1;
+    try{localStorage.setItem(store,ZOOMS[i]);}catch(e){}
+  };
+  const step=d=>{const n=Math.min(ZOOMS.length-1,Math.max(0,i+d));if(n!==i){i=n;apply(true);}};
+  ui.addEventListener('click',e=>{const b=e.target.closest('[data-z]');if(b)step(+b.dataset.z);});
+  // Ctrl＋ホイール（トラックパッドのピンチ）でも拡大・縮小
+  wrap.addEventListener('wheel',e=>{if(!e.ctrlKey)return;e.preventDefault();step(e.deltaY<0?1:-1);},{passive:false});
+  document.addEventListener('keydown',e=>{
+    if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.ctrlKey||e.metaKey)return;
+    if(e.key==='+'||e.key==='=')step(1);else if(e.key==='-')step(-1);
+  });
+  apply(false);
+}

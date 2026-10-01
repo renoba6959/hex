@@ -760,6 +760,7 @@ function undo(){
 
 /* ---- render ---- */
 const svg=document.getElementById('board');
+setupZoom(svg.parentNode,svg,'hex-zoom-game');
 function render(){
   svg.setAttribute('viewBox',VB.join(' ')); // 盤の大きさはマップごと
   updateMemo();

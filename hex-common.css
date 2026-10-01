@@ -49,3 +49,9 @@ select,input[type=text]{font-family:var(--sans);font-size:.88rem;padding:.25rem 
 select:focus-visible,input[type=text]:focus-visible,textarea:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 h1 .en{font-family:var(--sans);font-weight:700;font-size:.5em;letter-spacing:.35em;color:var(--muted);margin-left:.7em;vertical-align:.2em}
 h1 .sub{font-family:var(--serif);font-weight:600;font-size:.42em;letter-spacing:.12em;color:var(--muted);margin-left:.9em;padding-left:.9em;border-left:1px solid var(--line);vertical-align:.25em}
+/* 盤の拡大・縮小 */
+.board-box{position:relative;align-self:start;min-width:0}
+.board-box .board-wrap{overflow:auto;max-height:calc(100vh - 7rem)}
+.zoom{position:absolute;right:.6rem;bottom:.6rem;display:flex;align-items:center;gap:.25rem;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:.2rem;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+.zoom button{min-width:2rem;padding:.15rem .5rem;font-size:1rem;line-height:1.2}
+.zoom-v{font-size:.78rem;color:var(--muted);min-width:2.8rem;text-align:center;font-variant-numeric:tabular-nums}
