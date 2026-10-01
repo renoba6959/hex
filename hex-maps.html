@@ -34,7 +34,17 @@ svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:none
 .sel-ring{fill:none;stroke:var(--ink);stroke-width:2;stroke-dasharray:4 3}
 .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:.35rem}
 .maps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.3rem}
-.maps button{width:100%;text-align:left;display:flex;justify-content:space-between;gap:.5rem}
+.maps li{display:flex;gap:.3rem;align-items:stretch}
+.maps button.pick{flex:1;min-width:0;text-align:left;display:flex;justify-content:space-between;gap:.5rem}
+.maps button.pick span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.maps .ren{flex:none;padding:.2rem .45rem;line-height:1}
+.maps .del:hover{color:var(--red);border-color:var(--red)}
+.maps .save.dirty{color:var(--btn-text);background:var(--blue);border-color:var(--blue)}
+.maps-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.5rem}
+.maps-head h2{margin:0}
+.maps-head button{padding:.2rem .6rem;font-size:.85rem}
+.maps .ren svg{width:14px;height:14px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.maps input.name{flex:1;min-width:0;font:inherit;font-size:.9rem;padding:.3rem .45rem;background:var(--map);color:var(--ink);border:1px solid var(--blue);border-radius:4px}
 .maps .tag{font-weight:500;font-size:.78rem;opacity:.8}
 .brushes{display:grid;grid-template-columns:repeat(5,1fr);gap:.35rem}
 .brushes button{display:flex;flex-direction:column;align-items:center;gap:.15rem;padding:.3rem .2rem;font-size:.8rem}
@@ -48,14 +58,10 @@ textarea{width:100%;min-height:7rem;font-family:ui-monospace,Menlo,monospace;fon
 <body>
 <header>
   <h1>マップ編集</h1>
-  <p>地形・拠点・部隊・配置範囲を作れます。「ゲームで使う」で開いているゲーム画面に送られます。</p>
+  <p>地形・拠点・部隊・配置範囲を作れます。「ゲームで使う」で開いているゲーム画面に送られます。作ったマップはブラウザに下書きとして保存されます。一覧のフォルダのマークで、ゲームのフォルダ（data/maps）にファイルとして保存できます。</p>
 </header>
 <div class="bar"><div class="bar-in">
   <button id="bUse">ゲームで使う</button>
-  <button class="ghost" id="bNew">新規</button>
-  <button class="ghost" id="bDup">複製</button>
-  <button class="ghost" id="bRename">名前を変える</button>
-  <button class="ghost" id="bDel">削除</button>
   <span class="status" id="status" role="status"></span>
 </div></div>
 <main class="layout">
@@ -69,9 +75,10 @@ textarea{width:100%;min-height:7rem;font-family:ui-monospace,Menlo,monospace;fon
     </div>
     <div class="box" id="unitBox" hidden></div>
     <div class="box">
-      <h2>マップ</h2>
+      <div class="maps-head"><h2>マップ</h2><button class="ghost" id="bNew">＋ 新規</button></div>
       <ul class="maps" id="maps"></ul>
       <div class="row"><label class="chk">大きさ <input type="number" id="iCols" aria-label="列の数"> 列 × <input type="number" id="iRows" aria-label="行の数"> 行</label><button class="ghost" id="bSize">変更</button></div>
+      <div class="row"><button class="ghost" id="bRand">地形をランダムに作り直す</button></div>
       <div class="row"><label class="chk">赤軍のAI <select id="selAi"></select></label></div>
       <p class="hint" id="aiDesc"></p>
     </div>
@@ -85,13 +92,14 @@ textarea{width:100%;min-height:7rem;font-family:ui-monospace,Menlo,monospace;fon
 </main>
 <script src="hex-config.js"></script>
 <script src="hex-board.js"></script>
+<script src="data/index.js"></script>
 <script>
 const cfg=loadCfg();
 const TER_LABEL={plain:'平地',forest:'森',hill:'丘',mountain:'山',river:'川'},SIDE_NAME={blue:'青軍',red:'赤軍'};
 const TOTSU='M-16,9 L16,9 L16,-5 L7,-5 L7,-14 L-7,-14 L-7,-5 L-16,-5 Z';
 const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let db=loadMaps(), editId=db.current, mode='terrain', brush='forest', featBrush='village', zoneBrush='blue', side='blue', utype='spear';
-let selKey=null, drag=null, painting=false, saveTimer=null;
+let selKey=null, drag=null, painting=false, saveTimer=null, renaming=null; // renaming＝名前を編集中のマップ
 const MEN_UNIT=100; // 兵数の最小単位（人）
 const svg=document.getElementById('board');
 setupZoom(document.getElementById('wrap'),svg,'hex-zoom-maps');
@@ -105,7 +113,7 @@ function save(unitsChanged){
   if(unitsChanged)cur().rev=(cur().rev||0)+1; // 部隊を変えたら、ゲームはこのマップの初期配置から始め直す
   clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveMaps(db);setMsg('保存しました');},300);
 }
-function editable(){const m=cur();if(m.builtin){setMsg('「'+m.name+'」は組み込みのマップなので編集できません。「複製」してから編集してください');return false;}return true;}
+function editable(){const m=cur();if(m.builtin){setMsg('「'+m.name+'」は組み込みのマップなので編集できません。「＋ 新規」で新しいマップを作ってください');return false;}return true;}
 
 /* ---- 描画 ---- */
 function drawBase(){useMap(cur());svg.setAttribute('viewBox',VB.join(' '));document.getElementById('base').innerHTML=boardSVG();}
@@ -177,11 +185,29 @@ function drawUnitBox(){
 function rotate(dl){const u=selUnit();if(!u||!editable())return;u.f=(u.f+dl+6)%6;save(true);drawUnits();}
 function removeSel(){const u=selUnit();if(!u||!editable())return;const m=cur();m.units=m.units.filter(x=>x!==u);selKey=null;save(true);drawUnits();drawUnitBox();drawTool();}
 function drawList(){
-  document.getElementById('maps').innerHTML=db.maps.map(m=>'<li><button class="'+(m.id===editId?'':'ghost')+'" data-id="'+m.id+'"><span>'+esc(m.name)+'</span><span class="tag">'+
-    [m.builtin?'組み込み':'',m.id===db.current?'ゲームで使用中':''].filter(Boolean).join('・')+'</span></button></li>').join('');
+  // 各マップの横の鉛筆で、その場で名前を変えられる（組み込みのマップは変えられない）
+  const PEN='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>';
+  const SAVE='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13l3 3 3-3"/></svg>';
+  const BIN='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>';
+  document.getElementById('maps').innerHTML=db.maps.map(m=>'<li>'+(renaming===m.id
+    ?'<input class="name" id="iName" value="'+esc(m.name)+'" aria-label="マップの名前">'
+    :'<button class="pick '+(m.id===editId?'':'ghost')+'" data-id="'+m.id+'"><span>'+esc(m.name)+'</span><span class="tag">'+
+      [m.builtin?'組み込み':m.registered?(mapChangedFromFile(m)?'未保存の変更あり':'保存済み'):'下書き',m.id===db.current?'ゲームで使用中':''].filter(Boolean).join('・')+'</span></button>'+
+      (m.builtin?'':(!m.registered||mapChangedFromFile(m)?'<button class="ghost ren save'+(m.registered?' dirty':'')+'" data-save="'+m.id+'" title="フォルダ（data/maps）に保存" aria-label="「'+esc(m.name)+'」をフォルダに保存">'+SAVE+'</button>':'')+
+        '<button class="ghost ren" data-ren="'+m.id+'" title="名前を変える" aria-label="「'+esc(m.name)+'」の名前を変える">'+PEN+'</button>'+
+        '<button class="ghost ren del" data-del="'+m.id+'" title="削除" aria-label="「'+esc(m.name)+'」を削除">'+BIN+'</button>'))+'</li>').join('');
   document.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>{editId=b.dataset.id;selKey=null;refresh();});
+  document.querySelectorAll('[data-ren]').forEach(b=>b.onclick=()=>{renaming=b.dataset.ren;drawList();});
+  document.querySelectorAll('[data-save]').forEach(b=>b.onclick=()=>{const m=db.maps.find(x=>x.id===b.dataset.save);if(m)saveToFolder(m);});
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{const m=db.maps.find(x=>x.id===b.dataset.del);if(m)deleteMap(m);});
+  const inp=document.getElementById('iName');
+  if(inp){inp.focus();inp.select();
+    const done=ok=>{if(renaming==null)return;const m=db.maps.find(x=>x.id===renaming);renaming=null;
+      if(ok&&m&&inp.value.trim()&&inp.value.trim()!==m.name){m.name=inp.value.trim();saveMaps(db);setMsg('名前を「'+m.name+'」にしました');}drawList();};
+    inp.onkeydown=e=>{if(e.key==='Enter')done(true);else if(e.key==='Escape')done(false);};
+    inp.onblur=()=>done(true);}
   const m=cur();
-  document.getElementById('bRename').disabled=document.getElementById('bDel').disabled=document.getElementById('bSize').disabled=!!m.builtin;
+  document.getElementById('bSize').disabled=document.getElementById('bRand').disabled=!!m.builtin;
   const ic=document.getElementById('iCols'),ir=document.getElementById('iRows');
   const sa=document.getElementById('selAi'),ai=m.ai||'random';
   sa.innerHTML='<option value="random">ランダム（決着まで伏せる）</option>'+Object.entries(AI_STYLES).map(([k,n])=>'<option value="'+k+'">'+n+'</option>').join('');
@@ -189,7 +215,7 @@ function drawList(){
   ic.value=m.cols;ir.value=m.rows;ic.min=SIZE_MIN.cols;ic.max=SIZE_MAX.cols;ir.min=SIZE_MIN.rows;ir.max=SIZE_MAX.rows;ic.disabled=ir.disabled=!!m.builtin;
   document.getElementById('wrap').classList.toggle('readonly',!!m.builtin);
 }
-function refresh(){drawAll();drawList();drawTool();setMsg(cur().builtin?'組み込みのマップは編集できません。「複製」してから編集してください':'');}
+function refresh(){drawAll();drawList();drawTool();setMsg(cur().builtin?'組み込みのマップは編集できません。「＋ 新規」で新しいマップを作ってください':'');}
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{mode=b.dataset.mode;selKey=null;drawTool();drawUnits();drawUnitBox();});
 
 /* ---- 盤面の操作 ---- */
@@ -279,15 +305,100 @@ document.getElementById('bSize').onclick=()=>{
 };
 const newId=()=>'m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 function addMap(src){const m=cleanMap({...src,id:newId()});db.maps.push(m);editId=m.id;selKey=null;saveMaps(db);refresh();return m;}
-const STD=BUILTIN_MAPS[0];
-document.getElementById('bNew').onclick=()=>{const n=prompt('新しいマップの名前（部隊は標準の布陣から始まります）','新しいマップ');if(n!==null)addMap({name:n.trim()||'新しいマップ',terrain:{},units:JSON.parse(JSON.stringify(STD.units))});};
-document.getElementById('bDup').onclick=()=>{const m=cur();addMap({...JSON.parse(JSON.stringify(m)),name:m.name+'のコピー'});setMsg('複製しました');};
-document.getElementById('selAi').onchange=e=>{const m=cur();if(m.builtin)return;if(e.target.value==='random')delete m.ai;else m.ai=e.target.value;saveMaps(db);drawList();};
-document.getElementById('bRename').onclick=()=>{const m=cur();if(m.builtin)return;const n=prompt('マップの名前',m.name);if(n!==null&&n.trim()){m.name=n.trim();saveMaps(db);drawList();}};
-document.getElementById('bDel').onclick=()=>{
-  const m=cur();if(m.builtin||!confirm('「'+m.name+'」を削除しますか？'))return;
-  db.maps=db.maps.filter(x=>x!==m);if(db.current===m.id)db.current='standard';editId=db.current;selKey=null;saveMaps(db);refresh();setMsg('削除しました');
+/* ---- 地形のランダム生成 ---- */
+// 森・丘はかたまりで、山は小さな山並みで置き、川は6割くらいの確率で盤の端から端へ1本流す。布陣する左右の端2列には山を置かない
+function randomTerrain(cols,rows){
+  const t={},R=n=>Math.floor(Math.random()*n),ck=(c,r)=>c+','+r,inside=(c,r)=>c>=0&&c<cols&&r>=0&&r<rows;
+  const nbs=(c,r)=>{const p=fromCR(c,r);return DIRS.map(([dq,dr])=>{const q=p.q+dq,rr=p.r+dr;return {col:colOf(q,rr),row:rr};}).filter(o=>inside(o.col,o.row));};
+  const blobs=(type,share,minSize,maxSize,ok)=>{
+    let left=Math.round(cols*rows*share);
+    for(let tries=0;left>0&&tries<200;tries++){
+      const size=minSize+R(maxSize-minSize+1),start={col:R(cols),row:R(rows)};if(t[ck(start.col,start.row)]||!ok(start.col))continue;
+      const grown=[start];t[ck(start.col,start.row)]=type;left--;
+      while(grown.length<size&&left>0){const b=grown[R(grown.length)],n=nbs(b.col,b.row).filter(o=>!t[ck(o.col,o.row)]&&ok(o.col));if(!n.length)break;const o=n[R(n.length)];t[ck(o.col,o.row)]=type;grown.push(o);left--;}
+    }
+  };
+  blobs('mountain',0.04,2,4,c=>c>=2&&c<cols-2);
+  blobs('forest',0.15,3,8,()=>true);
+  blobs('hill',0.08,2,5,()=>true);
+  if(Math.random()<0.6){ // 川：上の端から下の端へ（山は避け、左右にゆれながら）
+    let c=2+R(Math.max(1,cols-4)),r=0;
+    for(let steps=0;steps<rows*3&&r<rows;steps++){
+      if(t[ck(c,r)]!=='mountain')t[ck(c,r)]='river';
+      const n=nbs(c,r).filter(o=>o.row>=r&&t[ck(o.col,o.row)]!=='mountain'&&t[ck(o.col,o.row)]!=='river');
+      const down=n.filter(o=>o.row>r);const pick=(down.length&&Math.random()<0.75?down:n);if(!pick.length)break;
+      const o=pick[R(pick.length)];if(o.row===r&&o.row===rows-1)break;c=o.col;r=o.row;
+    }
+  }
+  return t;
+}
+document.getElementById('bNew').onclick=()=>{const n=prompt('新しいマップの名前','新しいマップ');if(n!==null)addMap({name:n.trim()||'新しいマップ',terrain:randomTerrain(14,10),features:{},units:[]});};
+document.getElementById('bRand').onclick=()=>{
+  if(!editable())return;const m=cur();
+  if(Object.keys(m.terrain||{}).length&&!confirm('いまの地形を消して、ランダムに作り直しますか？（拠点と部隊はそのまま残ります）'))return;
+  m.terrain=randomTerrain(m.cols,m.rows);save(false);drawAll();setMsg('地形をランダムに作り直しました');
 };
+document.getElementById('selAi').onchange=e=>{const m=cur();if(m.builtin)return;if(e.target.value==='random')delete m.ai;else m.ai=e.target.value;saveMaps(db);drawList();};
+// 削除は必ず確認してから。フォルダに保存したマップは、ファイルごと消す
+async function deleteMap(m){
+  if(m.builtin)return;
+  if(m.registered){
+    if(!confirm('本当に「'+m.name+'」を削除しますか？\nフォルダのファイル（data/maps/'+m.id+'.js）も消えます。元に戻せません。'))return;
+    try{const root=await dataFolder();if(!root)return;const maps=await root.getDirectoryHandle('maps',{create:true});
+      try{await maps.removeEntry(m.id+'.js');}catch(e){}
+      await writeIndex(root);}catch(e){setMsg('フォルダから削除できませんでした：'+e.message);return;}
+  }else if(!confirm('本当に「'+m.name+'」を削除しますか？\n元に戻せません。'))return;
+  db.maps=db.maps.filter(x=>x!==m);if(db.current===m.id)db.current='standard';if(editId===m.id)editId=db.current;selKey=null;saveMaps(db);refresh();setMsg('「'+m.name+'」を削除しました');
+}
+/* ---- フォルダに保存（Chrome のファイル操作で、ゲームのフォルダの data/ に書き込む） ---- */
+// 選んだフォルダは IndexedDB に覚えておき、次からは聞き直さない（書き込みの許可だけ確認する）
+const idb=(mode,fn)=>new Promise((res,rej)=>{const r=indexedDB.open('hex-folder',1);r.onupgradeneeded=()=>r.result.createObjectStore('h');
+  r.onsuccess=()=>{const t=r.result.transaction('h',mode),q=fn(t.objectStore('h'));t.oncomplete=()=>res(q&&q.result);t.onerror=()=>rej(t.error);};r.onerror=()=>rej(r.error);});
+async function dataFolder(){
+  if(!window.showDirectoryPicker){setMsg('このブラウザではフォルダに書き込めません（Chrome で開いてください）');return null;}
+  let h=null;try{h=await idb('readonly',s=>s.get('root'));}catch(e){}
+  if(h&&(await h.queryPermission({mode:'readwrite'}))!=='granted'&&(await h.requestPermission({mode:'readwrite'}))!=='granted')h=null;
+  if(!h){
+    alert('ゲームのフォルダ（hex-facing-prototype.html がある「hex」フォルダ）を選んでください。');
+    h=await window.showDirectoryPicker({id:'hex-root',mode:'readwrite'});
+    try{await h.getFileHandle('hex-facing-prototype.html');}catch(e){setMsg('「hex」フォルダ（hex-facing-prototype.html があるフォルダ）を選んでください');return null;}
+    try{await idb('readwrite',s=>s.put(h,'root'));}catch(e){}
+  }
+  return await h.getDirectoryHandle('data',{create:true});
+}
+async function writeText(dir,name,text){const f=await dir.getFileHandle(name,{create:true}),w=await f.createWritable();await w.write(text);await w.close();}
+// data/maps・data/campaigns にあるファイルから目録（data/index.js）を作り直す
+async function writeIndex(root){
+  const list=async name=>{const out=[];const d=await root.getDirectoryHandle(name,{create:true});for await(const [n,e] of d.entries())if(e.kind==='file'&&n.endsWith('.js'))out.push(n.slice(0,-3));return out.sort();};
+  const maps=await list('maps'),camps=await list('campaigns');
+  await writeText(root,'index.js','// 朧 OBORO：フォルダに保存したデータの目録（マップ編集でフォルダに保存すると自動的に書き換わります）\n'+
+    'HEX_DATA.files={maps:'+JSON.stringify(maps)+',campaigns:'+JSON.stringify(camps)+'};\n'+
+    "HEX_DATA.files.maps.forEach(f=>document.write('<script src=\"data/maps/'+f+'.js\"><\\/script>'));\n"+
+    "HEX_DATA.files.campaigns.forEach(f=>document.write('<script src=\"data/campaigns/'+f+'.js\"><\\/script>'));\n");
+}
+// ファイル名にもなる保存名（英小文字・数字・ハイフン）
+const REG_NAME=/^[a-z0-9][a-z0-9-]{0,39}$/;
+async function saveToFolder(m){
+  clearTimeout(saveTimer);if(m.builtin)return;
+  let id=m.id;
+  if(!m.registered){
+    const n=prompt('保存名（ファイル名になります。英小文字・数字・ハイフンで。例：sekigahara-1）',REG_NAME.test(m.id)&&!/^m[a-z0-9]{8,}$/.test(m.id)?m.id:'');
+    if(n===null)return;id=n.trim();
+    if(!REG_NAME.test(id)){setMsg('保存名は英小文字・数字・ハイフンで、40文字までにしてください');return;}
+    if(db.maps.some(x=>x!==m&&x.id===id)){setMsg('「'+id+'」はほかのマップで使われています');return;}
+  }
+  try{
+    const root=await dataFolder();if(!root)return;
+    const maps=await root.getDirectoryHandle('maps',{create:true}),o=cleanMap({...m,id});
+    await writeText(maps,id+'.js','// 朧 OBORO マップ：'+o.name.replace(/[\r\n]/g,' ')+'\nHEX_DATA.maps.push('+JSON.stringify(o,null,1)+');\n');
+    await writeIndex(root);
+    if(db.current===m.id)db.current=id;
+    // フォルダのものと同じになったので、ブラウザの下書きからは外す（次に開いたときはフォルダから読み込む）
+    const i=HEX_DATA.maps.findIndex(x=>x.id===id);if(i>=0)HEX_DATA.maps[i]=o;else HEX_DATA.maps.push(o);
+    const was=editId===m.id;Object.assign(m,{id,registered:true});if(was)editId=id;saveMaps(db);refresh();
+    setMsg('「'+o.name+'」を data/maps/'+id+'.js に保存しました');
+  }catch(e){if(e.name!=='AbortError')setMsg('保存できませんでした：'+e.message);}
+}
 document.getElementById('bUse').onclick=()=>{
   clearTimeout(saveTimer);db.current=editId;saveMaps(db);drawList();
   const g=window.opener&&!window.opener.closed?window.opener:null;

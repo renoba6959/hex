@@ -51,17 +51,29 @@ const BUILTIN_MAPS=[
   ]}
 ];
 const MAPS_STORE='hex-facing-maps-v1', MAP_MSG='hex-facing-map'; // マップ編集タブ → ゲーム画面へのメッセージ
-// 保存しているのは自作のマップと、ゲームで使うマップのidだけ
+// フォルダに保存したマップ・キャンペーン（data/index.js が data/maps/*.js などを読み込み、ここに入れる）
+const HEX_DATA={maps:[],campaigns:[]};
+const regOf=id=>HEX_DATA.maps.find(m=>m&&m.id===id);
+const regJSON=id=>{const r=regOf(id);return r?JSON.stringify(cleanMap(r)):null;};
+// マップの一覧＝組み込み＋保存済み（フォルダ）＋下書き（ブラウザ）。保存済みのマップを編集したものは下書きとして上書きする
 function loadMaps(){
   const db={current:'standard',maps:BUILTIN_MAPS.map(m=>JSON.parse(JSON.stringify(m)))};
+  HEX_DATA.maps.forEach(m=>{if(m&&typeof m.id==='string'&&!db.maps.some(x=>x.id===m.id))db.maps.push({...cleanMap(m),registered:true});});
   try{
     const o=JSON.parse(localStorage.getItem(MAPS_STORE));
-    if(o&&Array.isArray(o.maps))o.maps.forEach(m=>{if(m&&typeof m.id==='string'&&!db.maps.some(x=>x.id===m.id))db.maps.push(cleanMap(m));});
+    if(o&&Array.isArray(o.maps))o.maps.forEach(m=>{
+      if(!m||typeof m.id!=='string'||BUILTIN_MAPS.some(x=>x.id===m.id))return;
+      const i=db.maps.findIndex(x=>x.id===m.id),c=cleanMap(m);
+      if(i>=0)db.maps[i]={...c,registered:true};else db.maps.push(c);
+    });
     if(o&&db.maps.some(m=>m.id===o.current))db.current=o.current;
   }catch(e){}
   return db;
 }
-function saveMaps(db){try{localStorage.setItem(MAPS_STORE,JSON.stringify({current:db.current,maps:db.maps.filter(m=>!m.builtin)}));}catch(e){}}
+// 保存済みのマップを編集して、フォルダのものと違っているか
+const mapChangedFromFile=m=>m.registered&&regJSON(m.id)!==JSON.stringify(cleanMap(m));
+// ブラウザに保存するのは下書きと、フォルダのものから変えた保存済みのマップだけ
+function saveMaps(db){try{localStorage.setItem(MAPS_STORE,JSON.stringify({current:db.current,maps:db.maps.filter(m=>!m.builtin&&(!m.registered||mapChangedFromFile(m))).map(m=>{const c={...m};delete c.registered;return c;})}));}catch(e){}}
 const isObj=o=>o&&typeof o==='object'&&!Array.isArray(o);
 const UNIT_TYPES=['spear','cav','archer','supply'];
 // 赤軍AIの作戦（マップごとに決められる。random＝戦闘ごとにランダムに選び、決着まで伏せる）
