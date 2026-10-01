@@ -232,30 +232,32 @@ function orderGoal(u){
   return {q:o.q,r:o.r};
 }
 // 行き先の隣まで、移動力の合計がいちばん少ない道（旋回も含む）。知っている部隊のマスと敵のZOCは通らない
-function pathTo(u,goal){
+function pathTo(u,goal,reach=1){
   const blocked=new Set(state.units.filter(o=>o!==u&&(o.side===u.side||spotted(o,u.side))).map(o=>key(o.q,o.r)));
   const sk=s=>s.q+','+s.r+','+s.f,start={q:u.q,r:u.r,f:u.f,c:0,prev:null,act:null},best=new Map([[sk(start),start]]),queue=[start];
   while(queue.length){
     let bi=0;for(let i=1;i<queue.length;i++)if(queue[i].c<queue[bi].c)bi=i;
     const s=queue.splice(bi,1)[0];if(best.get(sk(s))!==s)continue;
-    if(dist(s,goal)<=1){const acts=[];for(let x=s;x.prev;x=x.prev)acts.unshift(x.act);return acts;}
+    if(dist(s,goal)<=reach){const acts=[];for(let x=s;x.prev;x=x.prev)acts.unshift(x.act);return acts;}
     const push=n=>{const k=sk(n),o=best.get(k);if(!o||o.c>n.c){best.set(k,n);queue.push(n);}};
     [-1,1].forEach(dl=>push({q:s.q,r:s.r,f:(s.f+dl+6)%6,c:s.c+cfg.turnCost,prev:s,act:{t:'turn',dl}}));
     for(let d=0;d<6;d++){
       const nq=s.q+DIRS[d][0],nr=s.r+DIRS[d][1],k=key(nq,nr);
-      if(!cells.has(k)||blocked.has(k)||(inZoc(nq,nr,u.side)&&dist({q:nq,r:nr},goal)>1))continue;
+      if(!cells.has(k)||blocked.has(k)||(inZoc(nq,nr,u.side)&&dist({q:nq,r:nr},goal)>reach))continue;
       const c=moveCost(s,d);if(!isFinite(c))continue;
       const rel=(d-s.f+6)%6;push({q:nq,r:nr,f:(rel===1||rel===5)?d:s.f,c:s.c+c,prev:s,act:{t:'move',d}});
     }
   }
   return null;
 }
-// AIの輜重は、本陣からいちばん離れた味方（前線）へ往復する
+// AIの輜重：兵糧の残りが少ない味方（同じなら本陣から遠い前線）へ往復する。知っている敵が2マス以内なら本陣へ下がる
 function aiSupplyOrders(side){
-  const hq=honjinOf(side),front=state.units.filter(u=>u.side===side&&u.type!=='supply').sort((a,b)=>(hq?dist(b,hq)-dist(a,hq):0))[0];
+  const hq=honjinOf(side),foes=state.units.filter(e=>e.side!==side&&e.type!=='supply'&&spotted(e,side));
+  const need=state.units.filter(u=>u.side===side&&u.type!=='supply').sort((a,b)=>foodTurnsOf(a)-foodTurnsOf(b)||(hq?dist(b,hq)-dist(a,hq):0))[0];
   state.units.filter(u=>u.side===side&&u.type==='supply').forEach(u=>{
-    if(!front){u.order=null;return;}
-    if(!u.order)u.order={unit:front.id,phase:u.cargo<cargoMax(u)*cfg.supplyReturn?'back':'out'};else u.order.unit=front.id;
+    if(!need){u.order=null;return;}
+    if(!u.order)u.order={unit:need.id,phase:u.cargo<cargoMax(u)*cfg.supplyReturn?'back':'out'};else u.order.unit=need.id;
+    if(hqReady(side)&&nearestDist(u,foes)<=2&&u.order.phase!=='back'){u.order.phase='back';log(uname(u)+'は敵が近いので本陣へ下がる','sys',side);}
   });
 }
 let autoMoving=false; // 輜重の自動の往復中（手で動かしたときだけ命令を解除する）
@@ -270,8 +272,10 @@ async function autoSupply(side){
       if(u.order.phase!=='back'&&u.cargo<cargoMax(u)*cfg.supplyReturn&&hqReady(side)){u.order.phase='back';log(uname(u)+'は積み荷が減ったので本陣へ戻る','sys',u.side);}
       const goal=orderGoal(u);
       if(!goal){if(u.order.unit!=null&&u.order.phase!=='back'){log(uname(u)+'の行き先の部隊がいなくなった（往復を解除）','sys',u.side);u.order=null;}continue;}
-      if(dist(u,goal)<=1)continue; // 着いている（本陣なら次の手番のはじめに積み込む）
-      const acts=pathTo(u,goal);
+      // 部隊が行き先なら、その部隊の真横ではなく配れる範囲の少し手前で止まる（前線に出すぎない）
+      const reach=u.order.phase!=='back'&&u.order.unit!=null?Math.max(1,cfg.supplyRange-1):1;
+      if(dist(u,goal)<=reach)continue; // 着いている（本陣なら次の手番のはじめに積み込む）
+      const acts=pathTo(u,goal,reach);
       if(!acts){log(uname(u)+'の道がふさがれている','sys',u.side);continue;}
       state.selected=u.id;
       for(const a of acts){
@@ -636,17 +640,18 @@ function endTurn(){
 }
 
 /* ---- AI (red) ---- */
-let aiRed=true,aiBlue=false,busy=false,gen=0; // aiBlue＝青軍もAIに任せる（AI同士の検証用。画面からは切り替えない）
+let aiRed=true,aiBlue=false,busy=false,gen=0; // 一人用：赤軍は常にAI // aiBlue＝青軍もAIに任せる（AI同士の検証用。画面からは切り替えない）
 const isAI=side=>side==='red'?aiRed:aiBlue;
 const styleOf=side=>side==='red'?state.aiStyle:(state.aiStyleBlue||'ambush');
 let aiPick='map';try{const p=localStorage.getItem('hex-ai-pick');if(p==='map'||p==='random'||p in AI_STYLES)aiPick=p;}catch(e){}
 // 作戦ごとの重み：atk＝攻撃の得、counter＝反撃で受ける損害、threat＝狙われる危険、stealth＝隠密（0なら隠れない）、
-// near＝最も近い敵へ寄る強さ、hq＝敵の本陣へ向かう強さ、ground＝守りやすい場所を取る強さ
+// near＝最も近い敵へ寄る強さ、hq＝敵の本陣へ向かう強さ、ground＝守りやすい場所を取る強さ、
+// hqDef＝自軍の本陣を守る・奪い返す強さ、supply＝補給の範囲にとどまる強さ、raid＝敵の輜重を狙う強さ
 const AI_W={
-  rush:   {atk:1.2,counter:0.6,threat:0.3,stealth:0,  near:2,  hq:4,  ground:0},
-  careful:{atk:1,  counter:2,  threat:2,  stealth:0.5,near:1,  hq:0.5,ground:1},
-  ambush: {atk:1,  counter:1,  threat:1,  stealth:1.5,near:3,  hq:1,  ground:0},
-  hold:   {atk:1,  counter:1.2,threat:1.2,stealth:0.5,near:1.5,hq:0.5,ground:3},
+  rush:   {atk:1.2,counter:0.6,threat:0.3,stealth:0,  near:2,  hq:4,  ground:0,hqDef:0.3,supply:0.5,raid:1.5},
+  careful:{atk:1,  counter:2,  threat:2,  stealth:0.5,near:1,  hq:0.5,ground:1,hqDef:1.5,supply:1.5,raid:1},
+  ambush: {atk:1,  counter:1,  threat:1,  stealth:1.5,near:3,  hq:1,  ground:0,hqDef:0.7,supply:1,  raid:2},
+  hold:   {atk:1,  counter:1.2,threat:1.2,stealth:0.5,near:1.5,hq:0.5,ground:3,hqDef:1.5,supply:1.2,raid:0.8},
 };
 // 立っている場所の守りやすさ（地形と拠点の防御倍率、高所の見晴らし）。上限つき
 function groundVal(p,side){
@@ -673,7 +678,7 @@ function planFor(u){
   // 隠れた敵は知らないものとして考える
   const occ=new Set(state.units.filter(o=>o!==u&&(o.side===u.side||spotted(o,u.side))).map(o=>key(o.q,o.r)));
   const enemies=state.units.filter(e=>e.side!==u.side&&spotted(e,u.side));
-  const ctx={enemies,est:estVis(u.side),
+  const ctx={enemies,est:estVis(u.side),sup:supplyCells(u.side),
     lure:enemies.concat(Object.values(state.memo[u.side]||{}))}; // 近くで待ち伏せる価値のある相手（最後に見た位置も含む）
   const sk=s=>s.q+','+s.r+','+s.f+','+(s.dis?1:0)+(s.hid?1:0)+(s.seen?1:0);
   const start={q:u.q,r:u.r,f:u.f,mp:u.mp,dis:u.dis,hid:u.hidden,seen:false,prev:null,act:null};
@@ -711,7 +716,10 @@ function evalState(u,s,ctx,hideEnd){
   let atkVal=0,target=null,kills=false;
   // 伏兵の攻撃は奇襲の倍率がかかり、反撃を受けない。隠れ直すなら攻撃はしない
   if(!hideEnd)enemies.forEach(t=>{if(canAttack(V,t)){const r=computeAttack(V,t,surprise(V)),k=r.dmg>=t.hp,c=k||t.worked||V.hidden?null:computeCounter(V,t,r.dmg);
-    let v=(pct(Math.min(r.dmg,t.hp),t)+(k?35:0))*W.atk;if(c)v-=(pct(Math.min(c.dmg,u.hp),u)+(c.dmg>=u.hp?35:0))*W.counter;if(v>atkVal){atkVal=v;target=t;kills=k;}}});
+    let v=(pct(Math.min(r.dmg,t.hp),t)+(k?35:0))*W.atk;
+    if(t.type==='supply')v+=(20+(k?20:0))*W.raid; // 敵の輜重を断つ
+    if(surprise(V)||r.cat==='斜め後ろ'||r.cat==='真後ろ')v+=8*W.atk; // 側面・背後・奇襲は士気も大きく削る
+    if(c)v-=(pct(Math.min(c.dmg,u.hp),u)+(c.dmg>=u.hp?35:0))*W.counter;if(v>atkVal){atkVal=v;target=t;kills=k;}}});
   // 隠れて手番を終えるなら、狙われる危険は小さい（近接で攻撃すると姿を現す）
   const concealed=hideEnd||(s.hid&&!(target&&!(u.type==='archer'&&dist(V,target)>=2)));
   let threat=0;
@@ -724,6 +732,7 @@ function evalState(u,s,ctx,hideEnd){
     const front=dmg/dm;threat+=front*0.12+(dmg-front)*0.6;
   });
   if(concealed)threat*=0.25;
+  const mor=u.morale??100;threat*=1+Math.max(0,60-mor)/40; // 士気が低いほど危険を重く見る
   let stealth=0;
   if(s.seen)stealth-=12; // 隠れていたのに、見られていそうなところで姿をさらした
   if(hideEnd&&!s.hid&&est.has(key(s.q,s.r)))stealth-=6; // 見られながら隠れると、隠れた場所を知られる
@@ -734,7 +743,18 @@ function evalState(u,s,ctx,hideEnd){
   let pos=(u.type==='archer'?-Math.abs(near-3)*3-(near===1?10:0):-near*3)*W.near/3;
   const hq=honjinOf(other(u.side));
   if(hq){if(V.q===hq.q&&V.r===hq.r)pos+=state.taken[other(u.side)]?20:80;else if(u.type!=='archer')pos-=dist(V,hq)*W.hq;} // 敵の本陣を目指す
-  return {score:atkVal-threat*W.threat+stealth*W.stealth+pos+groundVal(V,u.side)*W.ground,target:hideEnd?null:target,hide:hideEnd};
+  // 補給：範囲の外に出るのは損。ただし兵糧に余裕がある（3ターン分以上）間はほとんど気にせず前に出る
+  const ft=foodTurnsOf(u);let sup=0;
+  if(!ctx.sup.has(key(V.q,V.r)))sup-=ft>=3?0.5:(4+(3-ft)*6)*(u.starving?2:1);
+  // 士気が低く脱走が出る部隊は前に出ず、補給か本陣のほうへ下がって立て直す
+  if(mor<cfg.desertLine){pos*=0.3;const home=[...state.units.filter(x=>x.side===u.side&&x.type==='supply'&&x.cargo>0),...(hqReady(u.side)?[hqReady(u.side)]:[])];if(home.length)pos-=nearestDist(V,home)*3;}
+  // 自軍の本陣：占領されたら奪い返しに戻る。敵が近づいていれば守りに入る（本陣の近くにいる部隊だけ。遠くの部隊は前線に残る）
+  const myHq=honjinOf(u.side);let def=0;
+  if(myHq&&u.type!=='supply'&&dist(u,myHq)<=6){
+    if(state.taken[u.side])def+=(V.q===myHq.q&&V.r===myHq.r?150:0)-dist(V,myHq)*2;
+    else{const danger=Math.max(0,5-nearestDist(myHq,enemies.filter(e=>e.type!=='supply')));if(danger)def+=(dist(V,myHq)<=2?danger*8:0)-danger*dist(V,myHq);}
+  }
+  return {score:atkVal-threat*W.threat+stealth*W.stealth+pos+groundVal(V,u.side)*W.ground+sup*W.supply+def*W.hqDef,target:hideEnd?null:target,hide:hideEnd};
 }
 function aiWantsAmbush(h,m){
   const r=computeAttack(h,m,true);
@@ -934,7 +954,7 @@ function renderPanel(sel,mine,v){
       (busy?'<p class="hint" style="margin-top:.4rem">赤軍が行動中です…</p>':'')+
       '<div class="row"><button id="bEnd"'+(busy?' disabled':'')+'>ターン終了</button><button class="ghost" id="bUndo"'+(state.history.length&&!busy?'':' disabled')+'>取り消し</button><button class="ghost" id="bNew">最初から</button></div>'+
       '<div class="row"><button class="ghost" id="bEdit"'+(busy?' disabled':'')+'>配置からやり直す</button><button class="ghost" id="bMaps2">マップ編集</button><button class="ghost" id="bCfg">数値調整</button><button class="ghost" id="bMan">説明書</button></div>'+
-      '<div class="row"><label class="chk"><input type="checkbox" id="cAi"'+(aiRed?' checked':'')+'> 赤軍をAIに任せる</label><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label><label class="chk"><input type="checkbox" id="cSup"'+(showSupply?' checked':'')+'> 補給範囲を表示</label></div>';
+      '<div class="row"><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label><label class="chk"><input type="checkbox" id="cSup"'+(showSupply?' checked':'')+'> 補給範囲を表示</label></div>';
   }
   const ch=state.choice&&sel&&mine?state.choice:null,cu=ch&&seenAt(ch.q,ch.r);
   if(ch&&cu&&canAttack(sel,cu)&&canHitStruct(sel,ch)){
@@ -981,7 +1001,6 @@ function renderPanel(sel,mine,v){
   on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));
   on('bOrder',()=>{state.pick=sel.id;render();});on('bPickX',()=>{state.pick=null;render();});on('bOrderX',()=>{sel.order=null;log(uname(sel)+'の往復を解除','sys',sel.side);render();});
   on('bHide',()=>hideUnit(sel));on('bFence',()=>work(sel,'fence'));on('bFort',()=>work(sel,'jinchi'));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
-  const ai=document.getElementById('cAi');if(ai)ai.onchange=()=>{aiRed=ai.checked;if(aiRed&&state.side==='red'&&state.phase==='battle')runAI();};
   const z=document.getElementById('cZoc');if(z)z.onchange=()=>{showZoc=z.checked;render();};
   const sp=document.getElementById('cSup');if(sp)sp.onchange=()=>{showSupply=sp.checked;try{localStorage.setItem('hex-supply-show',showSupply?'1':'0');}catch(e){}render();};
   renderLog(v);
