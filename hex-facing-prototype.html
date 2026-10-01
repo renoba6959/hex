@@ -26,11 +26,15 @@ svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:mani
 .unit.side-blue .totsu{fill:var(--blue)} .unit.side-red .totsu{fill:var(--red)}
 .unit.done{opacity:.55}
 .ulabel{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--unit-text);text-anchor:middle;dominant-baseline:central;pointer-events:none}
-.hpbg{fill:var(--grid)} .hp{fill:var(--ink)} .mor{fill:#D8A23A} .mor.low{fill:var(--red)}
+.hpbg{fill:var(--grid)} .hp{fill:var(--ink)}
+.men{font-family:var(--sans);font-weight:700;font-size:9px;fill:var(--ink);text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:var(--map);stroke-width:3px;pointer-events:none} .mor{fill:#D8A23A} .mor.low{fill:var(--red)}
 .dis{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--ink);paint-order:stroke;stroke:var(--map);stroke-width:3px}
 .unit.hid .totsu,.mark .totsu{fill-opacity:.5;stroke-dasharray:3 2}
 .mark{pointer-events:none;opacity:.75}
 .lbl.taken{fill:var(--red);font-size:12px}
+.supply-halo{fill:none;stroke:#fff;stroke-opacity:.85;stroke-width:4.5;stroke-linecap:round;pointer-events:none}
+.supply-edge{fill:none;stroke:#13803A;stroke-width:2.6;stroke-dasharray:6 4;stroke-linecap:round;pointer-events:none}
+.supply-fill{fill:#3FB25A;fill-opacity:.22;stroke:none}
 .route{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:4 3;opacity:.6;pointer-events:none}
 .badge.food{fill:#B07A1A}.badge.food.out{fill:var(--red)}
 .fog{fill:#141A28;fill-opacity:.42;stroke:none}
@@ -106,6 +110,7 @@ function relAngle(u,pos){
 
 /* ---- game state ---- */
 let state, showZoc=false;
+let showSupply=true;try{showSupply=localStorage.getItem('hex-supply-show')!=='0';}catch(e){}
 function newGame(edit){
   gen++;busy=false;
   const db=loadMaps(),map=findMap(db,db.current);useMap(map); // 戦闘中にマップが編集されても、この戦闘の地形は変わらない
@@ -196,6 +201,28 @@ function eatTick(side){
     u.food=0;u.starving=true;shiftMorale(u,-cfg.hungerMorale);
     log(uname(u)+'は兵糧が尽きた（士気−'+cfg.hungerMorale+'、士気'+moraleOf(u)+'）','sys',privOf(u));
   });
+}
+// 補給が届くマス（本陣と、積み荷のある輜重から）
+function supplyCells(side,only){
+  const out=new Set(),add=(p,r)=>cells.forEach((c,k)=>{if(dist(c,p)<=r)out.add(k);});
+  if(only){add(only,cfg.supplyRange);return out;}
+  const hq=hqReady(side);if(hq)add(hq,cfg.honjinSupplyRange);
+  state.units.forEach(u=>{if(u.side===side&&u.type==='supply'&&u.cargo>0)add(u,cfg.supplyRange);});
+  return out;
+}
+// マスの集まりの外周（隣が集まりの外になっている辺）をつないだパス
+function outlinePath(set){
+  let d='';
+  set.forEach(k=>{const c=cells.get(k);if(!c)return;
+    const pts=hexPts(c.x,c.y).split(' ').map(p=>p.split(',').map(Number));
+    for(let i=0;i<6;i++){
+      const n=key(c.q+DIRS[i][0],c.r+DIRS[i][1]);if(set.has(n))continue;
+      const o=toScreen(DIRS[i][0],DIRS[i][1]),mx=c.x+o.x/2,my=c.y+o.y/2; // 辺の中点に近い2つの角がその辺
+      const [a,b]=pts.map(p=>({p,d:Math.hypot(p[0]-mx,p[1]-my)})).sort((x,y)=>x.d-y.d);
+      d+='M'+a.p[0]+','+a.p[1]+'L'+b.p[0]+','+b.p[1];
+    }
+  });
+  return d;
 }
 // 往復の行き先（部隊が行き先なら、その部隊の今の位置）
 function orderGoal(u){
@@ -296,8 +323,7 @@ function viewer(){
 }
 /* ---- 視界（索敵） ---- */
 // 前方（攻撃できる向き、左右90°まで）は visFront マス、それ以外は visRear マス先まで見える。丘・山の上なら visHigh マス伸びる
-// 森・山は視線をさえぎる（丘・山の上からは森越しに見える）。森の中は隣のマスからしか見えない
-let useFog=true;try{useFog=localStorage.getItem('hex-fog')!=='0';}catch(e){}
+// 森・丘・山は視線をさえぎる（丘・山の上からは森・丘越しに見える）。森の中は隣のマスからしか見えない
 const other=s=>s==='blue'?'red':'blue';
 function hexLine(a,b){ // a と b の間のマス（両端を除く）。境目をかすめる線は、さえぎられにくい側を取る
   const n=dist(a,b),out=[];
@@ -307,11 +333,11 @@ function hexLine(a,b){ // a と b の間のマス（両端を除く）。境目�
 }
 function sightOf(u,round=false){ // round＝向きが分からないので全方向を前方の視界で見る（AIの推測用）
   const out=new Set([key(u.q,u.r)]),high=terOf(u)==='hill'||terOf(u)==='mountain',add=high?cfg.visHigh:0;
-  const blocks=p=>{const t=terOf(p);return t==='mountain'||(t==='forest'&&!high);};
+  const blocks=p=>{const t=terOf(p);return t==='mountain'||((t==='forest'||t==='hill')&&!high);}; // 丘は起伏があるので、低いところからはその奥が見えない
   cells.forEach((c,k)=>{
     const d=dist(u,c);if(d===0||d>(round||relAngle(u,c)<=90+EPS?cfg.visFront:cfg.visRear)+add)return;
     if(d>1&&terOf(c)==='forest')return;
-    if(hexLine(u,c).every(([p1,p2])=>blocks(p1)&&blocks(p2)||blocks(p1)&&p1.q===p2.q&&p1.r===p2.r))return;
+    if(hexLine(u,c).some(([p1,p2])=>blocks(p1)&&blocks(p2)))return; // 間のマスが1つでもさえぎれば見えない（境目をかすめるときは両側ともさえぎる場合だけ）
     out.add(k);
   });
   return out;
@@ -324,14 +350,14 @@ function visOf(side){ // その軍の部隊から見えるマス（部隊の位�
   if(visCache.size>200)visCache.clear();visCache.set(sig,v);return v;
 }
 // その軍が今この部隊を見つけているか。攻撃した部隊は、相手の次の手番が終わるまで位置が知られる（exposed）
-const spotted=(u,side)=>u.side===side||!u.hidden&&(!useFog||u.exposed||visOf(side).has(key(u.q,u.r)));
+const spotted=(u,side)=>u.side===side||!u.hidden&&(u.exposed||visOf(side).has(key(u.q,u.r)));
 // 相手から見えないところでの出来事は、自軍の記録にだけ残す
 const privOf=u=>spotted(u,other(u.side))?null:u.side;
 // 見失った敵の最後の位置（軍ごと）。新しく敵を見つけたら、それまでの行動は取り消せない
 function updateMemo(){
   if(state.phase!=='battle')return;
   ['blue','red'].forEach(s=>{
-    const memo=state.memo[s],vis=useFog?visOf(s):null;
+    const memo=state.memo[s],vis=visOf(s);
     state.units.forEach(e=>{
       if(e.side===s||!spotted(e,s))return;
       if(state.side===s&&!state.winner&&state.known[s]&&!state.known[s].has(e.id)){state.history=[];log(SIDE_NAME[s]+'が'+uname(e)+'を発見','sys',s);}
@@ -422,6 +448,7 @@ function tryMove(u,d){
   if(o){ // 隠れた敵のいるマスに入ろうとした：遭遇して止まる。相手の攻撃範囲の中なら強制的に奇襲を受ける
     state.history=[];u.mp=0;
     log('遭遇！ '+uname(u)+'が隠れていた'+uname(o)+'とぶつかった','kill');
+    if(u.hidden)reveal(u,'ぶつかって姿を現した'); // ぶつかった以上、お互いに位置が分かる
     if(canStrike(o,u))hiddenStrike(o,u,true);
     else{o.hidden=false;o.sprung=false;o.mark=null;log('　'+uname(o)+'は背後を突かれる形で見つかった（奇襲なし）','sys');}
     render();return;
@@ -776,10 +803,16 @@ function render(){
     state.units.forEach(t=>{if(canAttack(sel,t)&&seen(t,v)){const r=computeAttack(sel,t,surprise(sel)),c=(r.dmg>=t.hp||sel.hidden||t.worked)?null:computeCounter(sel,t,r.dmg);targets.set(key(t.q,t.r),{...r,loss:lossOf(t,r.dmg),closs:c?lossOf(sel,c.dmg):0});}});
   }
   let h=boardSVG({hp:struct,max:{fence:cfg.fenceHp,jinchi:cfg.jinchiHp,fort:cfg.fortHp}});
-  if(useFog&&v){ // 見えていないマスを暗くする（配置中も、相手の部隊は見える範囲だけ）
+  if(v){ // 見えていないマスを暗くする（配置中も、相手の部隊は見える範囲だけ）
     const vis=visOf(v);h+='<g style="pointer-events:none">';
     cells.forEach((c,k)=>{if(!vis.has(k))h+='<polygon class="fog" points="'+hexPts(c.x,c.y)+'"/>';});
     h+='</g>';
+  }
+  // 補給の届く範囲：全体の外周を緑の点線で。選んだ輜重の範囲はうすく塗る
+  const sv=v||(state.phase==='battle'?state.side:null);
+  if(showSupply&&sv&&state.phase==='battle'){
+    if(sel&&sel.type==='supply'&&sel.side===sv&&sel.cargo>0){h+='<g style="pointer-events:none">';supplyCells(sv,sel).forEach(k=>{const c=cells.get(k);h+='<polygon class="supply-fill" points="'+hexPts(c.x,c.y)+'"/>';});h+='</g>';}
+    const d=outlinePath(supplyCells(sv));if(d)h+='<path class="supply-halo" d="'+d+'"/><path class="supply-edge" d="'+d+'"/>'; // 草地の上でも見えるよう白い縁取りの上に点線
   }
   ['blue','red'].forEach(s=>{const p=state.taken[s]&&honjinOf(s);if(p){const c=cells.get(key(p.q,p.r));if(c)h+='<text class="lbl taken" x="'+c.x+'" y="'+(c.y-S*K*0.95).toFixed(1)+'">占領</text>';}}); // 占領された本陣
   h+='<g>';
@@ -810,8 +843,8 @@ function render(){
     if(sel&&sel.id===u.id)h+='<ellipse class="sel-ring" rx="'+(S*0.8)+'" ry="'+(S*0.8*K).toFixed(1)+'"/>';
     h+='<g transform="rotate('+(SANG[u.f]+90).toFixed(1)+')"><path class="totsu" d="'+TOTSU+'"/></g>';
     h+='<text class="ulabel" x="0" y="0">'+U.ch+'</text>';
-    h+='<rect class="hpbg" x="-14" y="17" width="28" height="3"/><rect class="hp" x="-14" y="17" height="3" width="'+(28*Math.max(0,u.hp)/maxHp(u)).toFixed(1)+'"/>';
-    h+='<rect class="hpbg" x="-14" y="21" width="28" height="2"/><rect class="mor'+(moraleOf(u)<cfg.desertLine?' low':'')+'" x="-14" y="21" height="2" width="'+(28*moraleOf(u)/100).toFixed(1)+'"/>'; // 士気
+    h+='<text class="men" y="18">'+menOf(u)+'</text>'; // 兵数
+    h+='<rect class="hpbg" x="-14" y="24" width="28" height="2"/><rect class="mor'+(moraleOf(u)<cfg.desertLine?' low':'')+'" x="-14" y="24" height="2" width="'+(28*moraleOf(u)/100).toFixed(1)+'"/>'; // 士気
     if(u.dis)h+='<text class="dis" x="14" y="-12">乱</text>';
     if(u.hidden||u.pending)h+='<text class="badge'+(u.pending?' pend':'')+'" x="-20" y="-12">伏</text>';
     if((u.side===v||v==null)&&(u.starving||foodTurnsOf(u)<=1))h+='<text class="badge food'+(u.starving?' out':'')+'" x="-20" y="4">'+(u.starving?'飢':'糧')+'</text>'; // 兵糧が残り少ない・尽きた
@@ -901,7 +934,7 @@ function renderPanel(sel,mine,v){
       (busy?'<p class="hint" style="margin-top:.4rem">赤軍が行動中です…</p>':'')+
       '<div class="row"><button id="bEnd"'+(busy?' disabled':'')+'>ターン終了</button><button class="ghost" id="bUndo"'+(state.history.length&&!busy?'':' disabled')+'>取り消し</button><button class="ghost" id="bNew">最初から</button></div>'+
       '<div class="row"><button class="ghost" id="bEdit"'+(busy?' disabled':'')+'>配置からやり直す</button><button class="ghost" id="bMaps2">マップ編集</button><button class="ghost" id="bCfg">数値調整</button><button class="ghost" id="bMan">説明書</button></div>'+
-      '<div class="row"><label class="chk"><input type="checkbox" id="cAi"'+(aiRed?' checked':'')+'> 赤軍をAIに任せる</label><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label><label class="chk"><input type="checkbox" id="cFog"'+(useFog?' checked':'')+'> 視界（索敵）</label></div>';
+      '<div class="row"><label class="chk"><input type="checkbox" id="cAi"'+(aiRed?' checked':'')+'> 赤軍をAIに任せる</label><label class="chk"><input type="checkbox" id="cZoc"'+(showZoc?' checked':'')+'> 敵のZOCを表示</label><label class="chk"><input type="checkbox" id="cSup"'+(showSupply?' checked':'')+'> 補給範囲を表示</label></div>';
   }
   const ch=state.choice&&sel&&mine?state.choice:null,cu=ch&&seenAt(ch.q,ch.r);
   if(ch&&cu&&canAttack(sel,cu)&&canHitStruct(sel,ch)){
@@ -950,7 +983,7 @@ function renderPanel(sel,mine,v){
   on('bHide',()=>hideUnit(sel));on('bFence',()=>work(sel,'fence'));on('bFort',()=>work(sel,'jinchi'));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
   const ai=document.getElementById('cAi');if(ai)ai.onchange=()=>{aiRed=ai.checked;if(aiRed&&state.side==='red'&&state.phase==='battle')runAI();};
   const z=document.getElementById('cZoc');if(z)z.onchange=()=>{showZoc=z.checked;render();};
-  const fg=document.getElementById('cFog');if(fg)fg.onchange=()=>{useFog=fg.checked;try{localStorage.setItem('hex-fog',useFog?'1':'0');}catch(e){}state.history=[];render();};
+  const sp=document.getElementById('cSup');if(sp)sp.onchange=()=>{showSupply=sp.checked;try{localStorage.setItem('hex-supply-show',showSupply?'1':'0');}catch(e){}render();};
   renderLog(v);
 }
 function renderLog(v){

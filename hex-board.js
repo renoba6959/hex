@@ -163,7 +163,7 @@ function featureSVG(f,c,hp,building){
     h+='<line x1="-25" y1="9" x2="25" y2="9" stroke="#4A3824" stroke-width="2.2"/><line x1="-25" y1="3" x2="25" y2="3" stroke="#4A3824" stroke-width="2.2"/>';
     for(let x=-24;x<=24;x+=6)h+='<path d="M'+(x-1.6)+',13 L'+(x-1.6)+',-3 L'+x+',-6 L'+(x+1.6)+',-3 L'+(x+1.6)+',13 Z" fill="#A67C4A" stroke="#3E2E1C" stroke-width=".8"/>';
   }
-  if(hp!=null&&hp<1)h+='<rect x="-14" y="17" width="28" height="3" fill="#6B5A44" opacity="1"/><rect x="-14" y="17" height="3" width="'+(28*hp).toFixed(1)+'" fill="#E8C27A"/>';
+  if(hp!=null&&hp<1)h+='<rect x="-14" y="28" width="28" height="3" fill="#6B5A44" opacity="1"/><rect x="-14" y="28" height="3" width="'+(28*hp).toFixed(1)+'" fill="#E8C27A"/>'; // 部隊の兵数・士気と重ならない高さ
   return h+'</g>';
 }
 // 砦のタイル：中央は fort-core、外周は中央から見た方向（DIRS の番号）の fort-ring-0〜5
