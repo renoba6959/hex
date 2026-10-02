@@ -40,7 +40,10 @@ function defaultZones(){const z={};for(let row=0;row<ROWS;row++)for(let col=0;co
 //   | 7ヘックスの砦 {type:'fort',part:'core'|'ring',fid:中央の「列,行」}（本陣は各軍に1つ）
 // units は初期配置 {side,type,col,row,f,men}。rev は部隊を編集するたびに増える（配置画面で保存した配置を古くするため）
 const TERRAINS=['plain','forest','hill','mountain','river'];
-const FEATURES=['honjin','village','jinchi','fort','fence'];
+const FEATURES=['honjin','village','jinchi','fort','fence']; // 戦闘中だけ、焼けた村は 'ruin' になる
+const STOCK_TYPES=['honjin','village','jinchi','fort']; // 蓄えを持てる拠点（砦は中央のマスに持つ）
+const holdsStock=f=>!!f&&STOCK_TYPES.includes(f.type)&&(f.type!=='fort'||f.part==='core');
+const stockOfFeat=f=>f.type==='honjin'?(f.stock??Infinity):(f.stock??0); // マップに書いた蓄え（本陣は書かなければ無限）
 const BUILTIN_MAPS=[
   {id:'standard',name:'標準',builtin:true,cols:14,rows:10,terrain:{"7,0":"forest", "8,0":"forest", "8,1":"forest", "9,0":"forest", "4,9":"forest", "5,9":"forest", "5,8":"forest", "6,9":"forest", "4,4":"hill", "4,5":"hill", "5,5":"hill", "6,2":"mountain", "6,3":"mountain", "7,3":"mountain", "7,4":"river", "7,5":"river", "8,6":"river", "7,7":"river", "7,8":"river", "7,9":"river"},rev:2,
    features:{'0,4':{type:'honjin',side:'blue'},'13,4':{type:'honjin',side:'red'},'3,7':{type:'village'},'10,2':{type:'village'},
@@ -90,12 +93,14 @@ function cleanMap(m){
   if(isObj(m.features))Object.entries(m.features).forEach(([k,f])=>{
     if(!inside(k)||!isObj(f)||!FEATURES.includes(f.type))return;
     if(f.type==='fort'&&!f.part){out.features[k]={type:'jinchi'};return;} // 以前の1マスの砦は陣地として読む
-    if(f.type==='fort'){if((f.part==='core'||f.part==='ring')&&typeof f.fid==='string')out.features[k]={type:'fort',part:f.part,fid:f.fid};return;}
+    if(f.type==='fort'){if((f.part==='core'||f.part==='ring')&&typeof f.fid==='string'){out.features[k]={type:'fort',part:f.part,fid:f.fid};if(f.part==='core'&&f.stock!=null&&f.stock!==''&&Number(f.stock)>=0)out.features[k].stock=Math.round(Number(f.stock));}return;} // 砦の蓄えは中央のマスに持つ
     if(f.type==='honjin'){
       if(f.side!=='blue'&&f.side!=='red')return;
       Object.keys(out.features).forEach(x=>{const o=out.features[x];if(o.type==='honjin'&&o.side===f.side)delete out.features[x];}); // 本陣は各軍に1つ
       out.features[k]={type:'honjin',side:f.side};
     }else out.features[k]={type:f.type};
+    // 本陣・村・陣地の蓄え（人×ターン）。本陣は書かなければ無限、ほかは書かなければなし
+    if((f.type==='honjin'||f.type==='village'||f.type==='jinchi')&&f.stock!=null&&f.stock!==''&&Number(f.stock)>=0)out.features[k].stock=Math.round(Number(f.stock));
   });
   // 中央を失った砦のかけらは消す
   Object.keys(out.features).forEach(k=>{const f=out.features[k];if(f.type==='fort'&&out.features[f.fid]?.part!=='core')delete out.features[k];});
@@ -155,7 +160,7 @@ function riverPaths(){
   });
   return out;
 }
-// 拠点の仮の記号（本陣＝軍の色の旗、村＝家、陣地＝土塁と幟、柵＝杭の並び。砦はタイルで描くので耐久の棒だけ）。hp は柵・砦の耐久の割合、building は工事中（薄く描く）
+// 拠点の仮の記号（本陣＝軍の色の旗、村＝家、焼けた村＝焦げた柱、陣地＝土塁と幟、柵＝杭の並び。砦はタイルで描くので耐久の棒だけ）。hp は柵・砦の耐久の割合、building は工事中（薄く描く）
 function featureSVG(f,c,hp,building){
   let h='<g class="feat" transform="translate('+c.x.toFixed(1)+','+c.y.toFixed(1)+')"'+(building?' opacity=".45"':'')+'>';
   if(f.type==='honjin'){
@@ -166,6 +171,10 @@ function featureSVG(f,c,hp,building){
   }else if(f.type==='village'){
     const house=(x,y)=>'<g transform="translate('+x+','+y+')"><path d="M-6,5 L-6,-2 L6,-2 L6,5 Z" fill="#D8B37A" stroke="#4A3824" stroke-width="1"/><path d="M-8,-1 L0,-8 L8,-1 Z" fill="#8E4B32" stroke="#4A3824" stroke-width="1"/></g>';
     h+=house(-21,6)+house(21,6)+house(0,-17);
+  }else if(f.type==='ruin'){
+    // 焼け跡の村：焦げた柱と灰
+    const burnt=(x,y)=>'<g transform="translate('+x+','+y+')"><path d="M-6,5 L-6,0 L-3,-3 L-1,1 L2,-4 L6,0 L6,5 Z" fill="#3B3632" stroke="#1E1A17" stroke-width="1"/></g>';
+    h+='<ellipse cx="0" cy="4" rx="'+(S*0.62).toFixed(1)+'" ry="'+(S*0.42*K).toFixed(1)+'" fill="#5A534B" opacity=".45"/>'+burnt(-21,6)+burnt(21,6)+burnt(0,-17);
   }else if(f.type==='jinchi'){
     // 土を盛った塁と幟
     h+='<path d="M-26,12 Q-26,-2 -12,-4 L12,-4 Q26,-2 26,12 Z" fill="#9C7A4E" stroke="#4A3824" stroke-width="1.1"/><path d="M-20,8 Q0,2 20,8" stroke="#6E5536" stroke-width="1" fill="none"/>'+

@@ -29,6 +29,7 @@ svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:none
 .unit .totsu{stroke:var(--ink);stroke-width:1.2}
 .unit.side-blue .totsu{fill:var(--blue)} .unit.side-red .totsu{fill:var(--red)}
 .ulabel{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--unit-text);text-anchor:middle;dominant-baseline:central}
+.men.stock{fill:#7A4A12}
 .men,.badge{font-family:var(--sans);font-weight:700;font-size:9px;fill:var(--ink);text-anchor:middle;paint-order:stroke;stroke:var(--map);stroke-width:3px}
 .badge{font-family:var(--serif);font-size:10px}
 .sel-ring{fill:none;stroke:var(--ink);stroke-width:2;stroke-dasharray:4 3}
@@ -98,7 +99,7 @@ const cfg=loadCfg();
 const TER_LABEL={plain:'平地',forest:'森',hill:'丘',mountain:'山',river:'川'},SIDE_NAME={blue:'青軍',red:'赤軍'};
 const TOTSU='M-16,9 L16,9 L16,-5 L7,-5 L7,-14 L-7,-14 L-7,-5 L-16,-5 Z';
 const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let db=loadMaps(), editId=db.current, mode='terrain', brush='forest', featBrush='village', zoneBrush='blue', side='blue', utype='spear';
+let db=loadMaps(), editId=db.current, mode='terrain', brush='forest', featBrush='village', featStock='', zoneBrush='blue', side='blue', utype='spear'; // featStock＝置く拠点の蓄え（空欄なら本陣は無限、ほかはなし）
 let selKey=null, drag=null, painting=false, saveTimer=null, renaming=null; // renaming＝名前を編集中のマップ
 const MEN_UNIT=100; // 兵数の最小単位（人）
 const svg=document.getElementById('board');
@@ -115,8 +116,17 @@ function save(unitsChanged){
 }
 function editable(){const m=cur();if(m.builtin){setMsg('「'+m.name+'」は組み込みのマップなので編集できません。「＋ 新規」で新しいマップを作ってください');return false;}return true;}
 
+/* ---- 拠点の蓄え ---- */
+const featHasStock=()=>['honjin-blue','honjin-red','village','jinchi','fort'].includes(featBrush);
+function applyStock(f){if(!f)return;const v=featStock.trim();if(v===''||!(Number(v)>=0))delete f.stock;else f.stock=Math.round(Number(v));}
+// 盤に蓄えの量を出す（本陣で書いていなければ「無限」）
+function stockLabels(){
+  let h='';featureAt.forEach((f,k)=>{if(!holdsStock(f))return;const s=f.stock;if(s==null&&f.type!=='honjin')return;const c=cells.get(k);if(!c)return;
+    h+='<text class="men stock" x="'+c.x+'" y="'+(c.y+S*K*0.62).toFixed(1)+'">蓄え'+(s==null?'∞':s)+'</text>';});
+  return h;
+}
 /* ---- 描画 ---- */
-function drawBase(){useMap(cur());svg.setAttribute('viewBox',VB.join(' '));document.getElementById('base').innerHTML=boardSVG();}
+function drawBase(){useMap(cur());svg.setAttribute('viewBox',VB.join(' '));document.getElementById('base').innerHTML=boardSVG()+stockLabels();}
 function drawGrid(){
   let h='';
   cells.forEach((c,k)=>{const z=zoneAt.get(k);h+='<polygon class="cell'+(z?' zone-'+z:'')+(drag&&drag.over===k?' drop':'')+'" data-key="'+k+'" points="'+hexPts(c.x,c.y)+'"/>';});
@@ -149,8 +159,11 @@ function drawTool(){
   }else if(mode==='features'){
     const F=[['honjin-blue','青の本陣'],['honjin-red','赤の本陣'],['village','村'],['jinchi','陣地'],['fort','砦（7）'],['fence','柵'],['none','消す']];
     t.innerHTML='<div class="pick">'+F.map(([f,l])=>'<button class="'+(f===featBrush?(f==='honjin-blue'?'b-blue ':f==='honjin-red'?'b-red ':'')+'on':'ghost')+'" data-f="'+f+'">'+l+'</button>').join('')+'</div>'+
-      '<p class="hint" style="margin-top:.5rem">本陣は各軍に1つで、置き直すと前の本陣は消えます。敵が本陣に入るとその軍の負けです。村は隠れられて兵が回復します。陣地（1マス）と砦は中の部隊の防御を上げます。砦は選んだマスを中央に周りの6マスごと置かれ、中央が特に堅くなります（どこか1マスを消すと砦全体が消えます）。柵は騎兵を止めます。柵・陣地・砦は攻撃で壊せます。</p>';
+      (featHasStock()?'<div class="row" style="margin-top:.6rem"><label class="chk">蓄え <input type="number" min="0" step="100" id="iStock" value="'+esc(featStock)+'" placeholder="'+(featBrush.startsWith('honjin')?'空欄で無限':'空欄でなし')+'"> 人×ターン</label></div>'+
+        '<p class="hint">この値で置きます。置いてある'+(featBrush.startsWith('honjin')?'本陣':'同じ拠点')+'をクリックすると、蓄えだけ書き換えます'+(featBrush==='fort'?'（砦は7マスで1つの蓄え）':'')+'。</p>':'')+
+      '<p class="hint" style="margin-top:.5rem">本陣は各軍に1つで、置き直すと前の本陣は消えます。敵に占領されるとその軍の士気が大きく下がります。村は隠れられて兵が回復します。陣地（1マス）と砦は中の部隊の防御を上げます。砦は選んだマスを中央に周りの6マスごと置かれ、中央が特に堅くなります（どこか1マスを消すと砦全体が消えます）。柵は騎兵を止めます。柵・陣地・砦は攻撃で壊せます。本陣・村・陣地・砦には兵糧の蓄えを持たせられます。</p>';
     t.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{featBrush=b.dataset.f;drawTool();});
+    const is=document.getElementById('iStock');if(is)is.oninput=()=>{featStock=is.value;};
   }else if(mode==='units'){
     const cnt=s=>{const us=cur().units.filter(u=>u.side===s);return us.length+'部隊・'+us.reduce((n,u)=>n+(u.men||cfg.units[u.type].men),0)+'人';};
     t.innerHTML='<div class="pick">'+['blue','red'].map(s=>'<button class="'+(s===side?'b-'+s+' on':'ghost')+'" data-side="'+s+'">'+SIDE_NAME[s]+'</button>').join('')+'<span></span>'+
@@ -233,17 +246,19 @@ function paintAt(k){
     const clear=x=>{const o=m.features[x];if(!o)return;if(o.type==='fort')removeFort(o.fid);else delete m.features[x];};
     if(featBrush==='none'){if(!old)return;clear(ck);}
     else if(type==='fort'){
-      if(old&&old.type==='fort'&&old.part==='core')return;
+      if(old&&old.type==='fort'){applyStock(m.features[old.fid]);save(false);drawBase();drawUnits();return;} // 砦をクリック：中央の蓄えだけ書き換える
       // 選んだマスを中央に、周りの6マス（盤の中だけ）ごと置く
       const [q,r]=k.split(',').map(Number),parts=[k,...DIRS.map(d=>key(q+d[0],r+d[1])).filter(x=>cells.has(x))];
       const crk=x=>{const o=crOf(x);return o.col+','+o.row;};
       parts.forEach(x=>clear(crk(x)));
-      parts.forEach((x,i)=>{m.features[crk(x)]={type:'fort',part:i?'ring':'core',fid:ck};});
+      parts.forEach((x,i)=>{m.features[crk(x)]={type:'fort',part:i?'ring':'core',fid:ck};});applyStock(m.features[ck]);
     }else{
-      if(old&&old.type===type&&old.side===fside)return;
-      clear(ck);
-      if(type==='honjin')Object.keys(m.features).forEach(x=>{const o=m.features[x];if(o.type==='honjin'&&o.side===fside)delete m.features[x];}); // 本陣は各軍に1つ
-      m.features[ck]=type==='honjin'?{type,side:fside}:{type};
+      if(old&&old.type===type&&old.side===fside){if(!featHasStock())return;applyStock(old);} // 同じ拠点をクリック：蓄えだけ書き換える
+      else{
+        clear(ck);
+        if(type==='honjin')Object.keys(m.features).forEach(x=>{const o=m.features[x];if(o.type==='honjin'&&o.side===fside)delete m.features[x];}); // 本陣は各軍に1つ
+        m.features[ck]=type==='honjin'?{type,side:fside}:{type};applyStock(m.features[ck]);
+      }
     }
     save(false);drawBase();drawUnits();
   }else if(mode==='zones'){

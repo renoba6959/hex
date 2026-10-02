@@ -127,7 +127,8 @@ function newGame(edit){
   else (map.units||[]).forEach(o=>{const c=fromCR(o.col,o.row);add(o.side,o.type,c.q,c.r,o.f,o.men);});
   units.filter(u=>cavBlocked(u.type,u)).forEach(u=>{const c=[...cells.values()].filter(c=>!cavBlocked(u.type,c)&&!units.some(x=>x.q===c.q&&x.r===c.r)).sort((a,b)=>dist(a,u)-dist(b,u))[0];if(c){u.q=c.q;u.r=c.r;}}); // 山に置かれた騎兵は近くの山以外へよける
   renumber(units);
-  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false}};
+  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false},stock:{}};
+  featureAt.forEach((f,k)=>{if(holdsStock(f))state.stock[k]=stockOfFeat(f);}); // 本陣・村・陣地・砦の蓄え（人×ターン）
   if(!edit&&canStart()){startBattle();return;} // 保存済みの配置でそのまま始める
   log(canStart()?'配置：部隊の位置と向きを決めてください':'このマップには両軍の部隊がそろっていません。マップ編集で部隊を置いてください','sys');render();
 }
@@ -174,21 +175,56 @@ function startSide(side){state.units.filter(u=>u.side===side).forEach(u=>{
 });
   supplyTick(side);moraleTick(side);
 }
+/* ---- 略奪と焼き払い（どちらもその部隊の手番を使い、取り消せない） ---- */
+// 略奪：占領した敵の本陣か、蓄えのある村で。自分の兵糧（輜重なら積み荷も）を満たし、隣の自軍の輜重にも積む
+const stockKey=p=>{const f=featOf(p);if(f?.type==='fort'){const [c,r]=f.fid.split(',').map(Number),o=fromCR(c,r);return key(o.q,o.r);}return key(p.q,p.r);};
+const lootSpot=u=>{const f=featOf(u);if(!f||!STOCK_TYPES.includes(f.type)||(f.type==='honjin'&&f.side===u.side))return null;if(STRUCTS.includes(f.type)&&!structType(u))return null;const k=stockKey(u);return (state.stock[k]??0)>0?k:null;};
+const lootWord=u=>{const f=featOf(u);return f.type==='honjin'||f.type==='village'?'略奪':'蓄えを運び出す';};
+const canAct=u=>state.phase==='battle'&&!state.winner&&u.side===state.side&&!u.attacked&&!u.pending;
+const canLoot=u=>canAct(u)&&!!lootSpot(u)&&(u.food<foodMax(u)||(u.type==='supply'&&u.cargo<cargoMax(u))||state.units.some(x=>x.side===u.side&&x.type==='supply'&&dist(x,u)===1&&x.cargo<cargoMax(x)));
+function loot(u){
+  if(!canLoot(u))return;
+  const k=lootSpot(u),f=featOf(u),name=f.type==='honjin'?SIDE_NAME[f.side]+'の本陣':f.type==='village'?'村':structName(u);let got=0;
+  const take=n=>{const g=Math.min(Math.max(0,n),state.stock[k]);if(isFinite(state.stock[k]))state.stock[k]-=g;got+=g;return g;};
+  u.food+=take(foodMax(u)-u.food);if(u.type==='supply')u.cargo+=take(cargoMax(u)-u.cargo);
+  state.units.filter(x=>x.side===u.side&&x.type==='supply'&&x!==u&&dist(x,u)===1).forEach(x=>{x.cargo+=take(cargoMax(x)-x.cargo);});
+  u.attacked=true;u.mp=0;state.history=[];if(u.hidden)reveal(u,'略奪して姿を現した');
+  log(uname(u)+'が'+name+'で'+lootWord(u)+'（兵糧'+Math.round(got)+'、残り'+(isFinite(state.stock[k])?Math.round(state.stock[k]):'∞')+'）','kill');render();
+}
+// 焼き払い：占領した敵の本陣の蓄え、村（蓄えごと焼け跡に）、砦・陣地・柵（壊す）。自軍の本陣は焼かない
+function burnTarget(u){
+  const f=featOf(u),k=key(u.q,u.r);if(!f)return null;
+  if(f.type==='honjin')return f.side!==u.side&&(state.stock[k]??0)>0?SIDE_NAME[f.side]+'の本陣の蓄え':null;
+  if(f.type==='village')return '村';
+  if(structType(u))return structName(u);
+  return null;
+}
+const canBurn=u=>canAct(u)&&!!burnTarget(u);
+function burn(u){
+  if(!canBurn(u))return;
+  const f=featOf(u),k=key(u.q,u.r),what=burnTarget(u);
+  if(f.type==='honjin')state.stock[k]=0;
+  else if(f.type==='village'){state.stock[k]=0;featureAt.set(k,{type:'ruin'});}
+  else{delete struct[k];if(f.built)featureAt.delete(k);if(state.stock[k])state.stock[k]=0;} // 陣地・砦（中央）の蓄えも焼ける
+  u.attacked=true;u.mp=0;state.history=[];if(u.hidden)reveal(u,'火を放って姿を現した');
+  log(uname(u)+'が'+what+'を焼き払った','kill');render();
+}
 /* ---- 兵糧と補給 ---- */
-const foodMax=u=>menOf(u)*cfg.foodTurns,cargoMax=u=>u.men0*cfg.supplyCap;
+const foodMax=u=>menOf(u)*cfg.foodTurns,cargoMax=u=>u.men0*cfg.supplyCap,foodTurnsMax=()=>cfg.foodTurns-1;
 const foodTurnsOf=u=>menOf(u)?Math.floor((u.food??0)/menOf(u)+1e-9):0;
-const hqReady=side=>{const hq=honjinOf(side);return hq&&!state.taken[side]?hq:null;};
+const hqReady=side=>{const hq=honjinOf(side);return hq&&!state.taken[side]&&(state.stock[key(hq.q,hq.r)]??Infinity)>0?hq:null;}; // 占領されておらず、蓄えが残っている本陣
 // 手番のはじめ：本陣のそばの輜重は積み込む。積み荷が少ない（supplyReturn 未満）ときの積み込みはその手番を使い、
 // 少し減っただけなら継ぎ足すだけで動ける。そのあと本陣と輜重が周りの部隊へ兵糧を配る
 function supplyTick(side){
   const us=state.units.filter(u=>u.side===side),hq=hqReady(side);
   us.forEach(u=>{u.supplied=false;});
+  const hk=hq&&key(hq.q,hq.r),take=n=>{const g=Math.min(n,state.stock[hk]??Infinity);if(isFinite(state.stock[hk]))state.stock[hk]-=g;return g;}; // 本陣の蓄えから出す
   if(hq)us.filter(u=>u.type==='supply'&&dist(u,hq)<=1&&u.cargo<cargoMax(u)).forEach(u=>{
-    const big=u.cargo<cargoMax(u)*cfg.supplyReturn;u.cargo=cargoMax(u);if(u.order)u.order.phase='out';
+    const big=u.cargo<cargoMax(u)*cfg.supplyReturn,g=take(cargoMax(u)-u.cargo);if(g<=0)return;u.cargo+=g;if(u.order)u.order.phase='out';
     if(big){u.mp=0;log(uname(u)+'が本陣で積み込み（'+u.cargo+'、この手番は動けない）','sys',u.side);}
   });
   const fill=(u,give)=>{const need=Math.max(0,foodMax(u)-u.food),g=Math.min(need,give);u.food+=g;u.supplied=true;return g;};
-  if(hq)us.filter(u=>dist(u,hq)<=cfg.honjinSupplyRange).forEach(u=>fill(u,Infinity));
+  if(hq)us.filter(u=>dist(u,hq)<=cfg.honjinSupplyRange).sort((a,b)=>foodTurnsOf(a)-foodTurnsOf(b)).forEach(u=>{const need=Math.max(0,foodMax(u)-u.food);if(need>0)u.food+=take(need);if((state.stock[hk]??1)>0||need===0)u.supplied=true;});
   // 輜重は、残りの少ない部隊から順に配る
   us.filter(s=>s.type==='supply'&&s.cargo>0).forEach(s=>{
     us.filter(u=>dist(u,s)<=cfg.supplyRange).sort((a,b)=>foodTurnsOf(a)-foodTurnsOf(b)).forEach(u=>{if(s.cargo>0)s.cargo-=fill(u,s.cargo);});
@@ -746,6 +782,9 @@ function evalState(u,s,ctx,hideEnd){
   if(hq){if(V.q===hq.q&&V.r===hq.r)pos+=state.taken[other(u.side)]?20:80;else if(u.type!=='archer')pos-=dist(V,hq)*W.hq;} // 敵の本陣を目指す
   // 補給：範囲の外に出るのは損。ただし兵糧に余裕がある（3ターン分以上）間はほとんど気にせず前に出る
   const ft=foodTurnsOf(u);let sup=0;
+  // 兵糧が減ってきたら、蓄えのある場所（村・陣地・砦、占領した敵の本陣）へ取りに行く
+  if(ft<foodTurnsMax()){const spots=[...state.stock?Object.keys(state.stock):[]].filter(k=>state.stock[k]>0).map(k=>{const [q,r]=k.split(',').map(Number);return {q,r};}).filter(p=>lootSpot({...p,side:u.side}));
+    if(spots.length)sup+=(lootSpot({...V,side:u.side})?(cfg.foodTurns-ft)*12:-nearestDist(V,spots)*(cfg.foodTurns-ft)*1.5);}
   if(!ctx.sup.has(key(V.q,V.r)))sup-=ft>=3?0.5:(4+(3-ft)*6)*(u.starving?2:1);
   // 士気が低く脱走が出る部隊は前に出ず、補給か本陣のほうへ下がって立て直す
   if(mor<cfg.desertLine){pos*=0.3;const home=[...state.units.filter(x=>x.side===u.side&&x.type==='supply'&&x.cargo>0),...(hqReady(u.side)?[hqReady(u.side)]:[])];if(home.length)pos-=nearestDist(V,home)*3;}
@@ -789,6 +828,9 @@ async function runAI(){
     if(state.winner)break;
     if(plan.hide){if(canHide(u))hideUnit(u);await sleep(220);}
     else if(plan.target&&state.units.includes(plan.target)&&canAttack(u,plan.target)){doAttack(u,plan.target);await sleep(380);}
+    else if(canLoot(u)){loot(u);await sleep(300);}
+    // 敵の本陣の蓄えは自軍の補給庫として残し、奪い返されそうなとき（知っている敵が3マス以内）だけ焼く
+    else if(canBurn(u)&&featOf(u)?.type==='honjin'&&state.units.some(e=>e.side!==u.side&&e.type!=='supply'&&spotted(e,u.side)&&dist(e,u)<=3)){burn(u);await sleep(300);}
     else{
       const f=[...cells.values()].find(c=>canHitStruct(u,c)&&fenceAt(c)&&cfg.fenceVs[u.type]>=1); // 行く手の柵は、壊しやすい兵種で壊す
       if(f){attackStruct(u,f);await sleep(380);}
@@ -894,14 +936,17 @@ function terLabel(p){
 }
 function featLabel(p){
   const f=featOf(p);if(!f)return '';
-  const pc=x=>Math.round(x*100)+'%';
-  if(f.type==='honjin')return SIDE_NAME[f.side]+'の本陣（'+SIDE_NAME[f.side]+'の防御×'+cfg.honjinDef+'、手番ごとに'+pc(cfg.honjinHeal)+'回復、敵に占領されると全部隊の士気−'+cfg.honjinLossMorale+'）'+(state.taken[f.side]?'【占領されている】':'');
+  const pc=x=>Math.round(x*100)+'%',v=viewer(),stk=state.stock?.[stockKey(p)];
+  const stockTxt=s=>s===undefined?'':'、蓄え'+(isFinite(s)?Math.round(s):'無限');
+  if(f.type==='honjin')return SIDE_NAME[f.side]+'の本陣（'+SIDE_NAME[f.side]+'の防御×'+cfg.honjinDef+'、手番ごとに'+pc(cfg.honjinHeal)+'回復、敵に占領されると全部隊の士気−'+cfg.honjinLossMorale+
+    (v==null||f.side===v||state.units.some(u=>u.side===v&&u.q===p.q&&u.r===p.r)?stockTxt(state.stock?.[key(p.q,p.r)]):'、蓄えは不明')+'）'+(state.taken[f.side]?'【占領されている】':''); // 敵の本陣の蓄えは占領するまで分からない
   if(STRUCTS.includes(f.type)){
     const t=structType(p),s=struct[key(p.q,p.r)],name=structName(p);if(!t)return '壊れた'+name;
     const eff=fmt(1+(fullDef(p)-1)*ratioOf(p)),hp=s.hp+'／'+maxOf(t);
-    return name+'（'+(s.done?'耐久'+hp:'工事中 '+hp)+'、防御×'+eff+(t==='fence'?(s.done?'、騎兵は入れず攻撃もできない':'、完成するまで騎兵は止められない'):'、入るのに+'+cfg.fortMove)+'）';
+    return name+'（'+(s.done?'耐久'+hp:'工事中 '+hp)+'、防御×'+eff+(t==='fence'?(s.done?'、騎兵は入れず攻撃もできない':'、完成するまで騎兵は止められない'):'、入るのに+'+cfg.fortMove)+(stk>0?stockTxt(stk):'')+'）';
   }
-  if(f.type==='village')return '村（防御×'+cfg.villageDef+'、隠れられる、手番ごとに'+pc(cfg.villageHeal)+'回復）';
+  if(f.type==='village')return '村（防御×'+cfg.villageDef+'、隠れられる、手番ごとに'+pc(cfg.villageHeal)+'回復'+(stk>0?stockTxt(stk):'')+'）';
+  if(f.type==='ruin')return '焼け跡（村の働きはない）';
   return '';
 }
 function renderPanel(sel,mine,v){
@@ -995,11 +1040,13 @@ function renderPanel(sel,mine,v){
             '<button id="bFort"'+(canWork(sel,'jinchi')?'':' disabled')+'>'+(jt==='fort'?'砦を修理':'ここに陣地')+prog(jt,jp)+'（'+r+'・F）</button></div>';
         })():'')+
         (sel.hidden?'<div class="row"><span class="hint">行軍（M）</span><button id="bMH" class="'+(state.march==='normal'?'ghost':'on')+'">隠蔽行軍（+'+cfg.hideMove+'/マス）</button><button id="bMN" class="'+(state.march==='normal'?'on':'ghost')+'">通常行軍</button></div>':'')+
+        (canLoot(sel)||canBurn(sel)?'<div class="row">'+(canLoot(sel)?'<button id="bLoot">'+lootWord(sel)+'（L）</button>':'')+(canBurn(sel)?'<button class="ghost" id="bBurn">'+burnTarget(sel)+'を焼き払う</button>':'')+'</div>':'')+
         (onCover(sel)&&!sel.pending&&(!sel.hidden||sel.sprung)?'<div class="row"><button id="bHide"'+(canHide(sel)?'':' disabled')+'>隠蔽する（H）</button></div>':''):'');
   }
   const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
   on('bEnd',endTurn);on('bUndo',undo);on('bNew',()=>newGame(false));on('bEdit',editFormation);on('bCfg',openSettings);on('bMaps2',openMaps);on('bMan',openManual);
   on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));
+  on('bLoot',()=>loot(sel));on('bBurn',()=>{if(confirm(burnTarget(sel)+'を焼き払いますか？元に戻せません。'))burn(sel);});
   on('bOrder',()=>{state.pick=sel.id;render();});on('bPickX',()=>{state.pick=null;render();});on('bOrderX',()=>{sel.order=null;log(uname(sel)+'の往復を解除','sys',sel.side);render();});
   on('bHide',()=>hideUnit(sel));on('bFence',()=>work(sel,'fence'));on('bFort',()=>work(sel,'jinchi'));on('bMH',()=>{state.march='hidden';render();});on('bMN',()=>{state.march='normal';render();});
   const z=document.getElementById('cZoc');if(z)z.onchange=()=>{showZoc=z.checked;render();};
@@ -1051,6 +1098,7 @@ document.addEventListener('keydown',e=>{
   else if((e.key==='h'||e.key==='H')&&sel&&state.phase==='battle')hideUnit(sel);
   else if((e.key==='b'||e.key==='B')&&sel)work(sel,'fence');
   else if((e.key==='f'||e.key==='F')&&sel)work(sel,'jinchi');
+  else if((e.key==='l'||e.key==='L')&&sel)loot(sel);
   else if((e.key==='m'||e.key==='M')&&sel&&sel.hidden){state.march=state.march==='normal'?'hidden':'normal';render();}
   else if(e.key==='Enter'){endTurn();}
   else if(e.key==='Escape'){if(state.pick!=null)state.pick=null;else if(state.choice)state.choice=null;else state.selected=null;render();}
