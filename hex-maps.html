@@ -343,8 +343,10 @@ document.getElementById('selAi').onchange=e=>{const m=cur();if(m.builtin)return;
 async function deleteMap(m){
   if(m.builtin)return;
   if(m.registered){
+    let root;try{root=await dataFolder();}catch(e){if(e.name!=='AbortError')setMsg('フォルダを開けませんでした：'+e.message);return;}
+    if(!root)return;
     if(!confirm('本当に「'+m.name+'」を削除しますか？\nフォルダのファイル（data/maps/'+m.id+'.js）も消えます。元に戻せません。'))return;
-    try{const root=await dataFolder();if(!root)return;const maps=await root.getDirectoryHandle('maps',{create:true});
+    try{const maps=await root.getDirectoryHandle('maps',{create:true});
       try{await maps.removeEntry(m.id+'.js');}catch(e){}
       await writeIndex(root);}catch(e){setMsg('フォルダから削除できませんでした：'+e.message);return;}
   }else if(!confirm('本当に「'+m.name+'」を削除しますか？\n元に戻せません。'))return;
@@ -354,16 +356,19 @@ async function deleteMap(m){
 // 選んだフォルダは IndexedDB に覚えておき、次からは聞き直さない（書き込みの許可だけ確認する）
 const idb=(mode,fn)=>new Promise((res,rej)=>{const r=indexedDB.open('hex-folder',1);r.onupgradeneeded=()=>r.result.createObjectStore('h');
   r.onsuccess=()=>{const t=r.result.transaction('h',mode),q=fn(t.objectStore('h'));t.oncomplete=()=>res(q&&q.result);t.onerror=()=>rej(t.error);};r.onerror=()=>rej(r.error);});
+// Chrome はボタンを押した直後にしかフォルダの選択や許可の確認を出させないので、クリックしたら最初にこれを呼ぶ
+// （先に入力欄や確認を出すと「押した直後」の扱いが切れて断られる）。選んだフォルダはページを開いたときに読み込んでおく
+let folderHandle=null;idb('readonly',s=>s.get('root')).then(h=>{folderHandle=h||null;}).catch(()=>{});
 async function dataFolder(){
   if(!window.showDirectoryPicker){setMsg('このブラウザではフォルダに書き込めません（Chrome で開いてください）');return null;}
-  let h=null;try{h=await idb('readonly',s=>s.get('root'));}catch(e){}
-  if(h&&(await h.queryPermission({mode:'readwrite'}))!=='granted'&&(await h.requestPermission({mode:'readwrite'}))!=='granted')h=null;
-  if(!h){
-    alert('ゲームのフォルダ（hex-facing-prototype.html がある「hex」フォルダ）を選んでください。');
-    h=await window.showDirectoryPicker({id:'hex-root',mode:'readwrite'});
-    try{await h.getFileHandle('hex-facing-prototype.html');}catch(e){setMsg('「hex」フォルダ（hex-facing-prototype.html があるフォルダ）を選んでください');return null;}
-    try{await idb('readwrite',s=>s.put(h,'root'));}catch(e){}
+  if(folderHandle){
+    if((await folderHandle.requestPermission({mode:'readwrite'}))==='granted')return await folderHandle.getDirectoryHandle('data',{create:true});
+    setMsg('フォルダへの書き込みが許可されませんでした。もう一度押して、許可してください');return null;
   }
+  setMsg('ゲームのフォルダ（hex-facing-prototype.html がある「hex」フォルダ）を選んでください');
+  const h=await window.showDirectoryPicker({id:'hex-root',mode:'readwrite'});
+  try{await h.getFileHandle('hex-facing-prototype.html');}catch(e){setMsg('選んだフォルダが違います。「hex」フォルダ（hex-facing-prototype.html があるフォルダ）を選んでください');return null;}
+  folderHandle=h;try{await idb('readwrite',s=>s.put(h,'root'));}catch(e){}
   return await h.getDirectoryHandle('data',{create:true});
 }
 async function writeText(dir,name,text){const f=await dir.getFileHandle(name,{create:true}),w=await f.createWritable();await w.write(text);await w.close();}
@@ -380,6 +385,8 @@ async function writeIndex(root){
 const REG_NAME=/^[a-z0-9][a-z0-9-]{0,39}$/;
 async function saveToFolder(m){
   clearTimeout(saveTimer);if(m.builtin)return;
+  let root;try{root=await dataFolder();}catch(e){if(e.name!=='AbortError')setMsg('フォルダを開けませんでした：'+e.message);return;}
+  if(!root)return;
   let id=m.id;
   if(!m.registered){
     const n=prompt('保存名（ファイル名になります。英小文字・数字・ハイフンで。例：sekigahara-1）',REG_NAME.test(m.id)&&!/^m[a-z0-9]{8,}$/.test(m.id)?m.id:'');
@@ -388,7 +395,6 @@ async function saveToFolder(m){
     if(db.maps.some(x=>x!==m&&x.id===id)){setMsg('「'+id+'」はほかのマップで使われています');return;}
   }
   try{
-    const root=await dataFolder();if(!root)return;
     const maps=await root.getDirectoryHandle('maps',{create:true}),o=cleanMap({...m,id});
     await writeText(maps,id+'.js','// 朧 OBORO マップ：'+o.name.replace(/[\r\n]/g,' ')+'\nHEX_DATA.maps.push('+JSON.stringify(o,null,1)+');\n');
     await writeIndex(root);
