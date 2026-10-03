@@ -124,9 +124,10 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     </table>
     <ul>
       <li>斜め前に動くと、その方向を向きます。</li>
-      <li>旋回（60度）は移動力 <span class="v" data-v="turnCost"></span>。敵と接しているときは <span class="v" data-v="contactTurnCost"></span> かかり、隊列が乱れます。</li>
+      <li>旋回（60度）は移動力 <span class="v" data-v="turnCost"></span>。敵と接しているときは <span class="v" data-v="contactTurnCost"></span> かかり、隊列が乱れます。隠れている部隊は敵に知られていないので、敵の隣でも普段どおり旋回できます。</li>
       <li>地形や拠点に入るときは、追加のコストがかかります（<a href="#terrain">地形</a>・<a href="#bases">拠点</a>）。</li>
       <li><b>ZOC</b>：敵の正面側の隣のマスに入ると、その手番の移動は止まります。隠れている部隊は ZOC を持ちません。</li>
+      <li><b>入れ替え</b>（X）：隣の味方と位置を入れ替えられます（前線と後方の交代など）。両方がそれぞれ相手のマスへの移動コストを払い、向きはそのままです。敵と接していると両方の隊列が乱れます。攻撃済み・隠蔽中・隠蔽の準備中の部隊はできません。</li>
     </ul>
 
     <h2 id="attack">攻撃</h2>
@@ -145,7 +146,9 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     <h3>そのほか</h3>
     <ul>
       <li><b>兵種相性</b>：槍兵は騎兵に強く、騎兵は弓兵に強く、弓兵は槍兵に強めです。槍兵は正面から来る騎兵に対して、防御が <span class="v" data-v="spearFrontDef" data-x></span> になります。</li>
-      <li><b>隊列の乱れ</b>：乱れた部隊は、攻撃も防御も <span class="v" data-v="disorder" data-x></span> になります。自軍の手番のはじめに直ります。</li>
+      <li><b>隊列の乱れ</b>（乱）：敵と接しながら旋回したり入れ替えたりすると、攻撃も防御も <span class="v" data-v="disorder" data-x></span> になります。</li>
+      <li><b>混乱</b>（混）：奇襲を受けたり、工事中に襲われたりすると、攻撃も防御も <span class="v" data-v="confusion" data-x></span> になり、反撃もできません。</li>
+      <li>どちらも、自軍の手番のはじめに直ります。</li>
       <li>盤面には、攻撃できる敵に予想の損害人数が出ます。「反」は反撃で失う人数です。</li>
     </ul>
 
@@ -173,8 +176,9 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     </ul>
     <h3>奇襲</h3>
     <ul>
-      <li>隠れた部隊の攻撃は奇襲になります。損害 <span class="v" data-v="ambush" data-x></span>、反撃なし、相手の隊列が乱れます。奇襲になるのは、隠れてから最初の1回だけです。</li>
+      <li>隠れた部隊の攻撃は奇襲になります。損害 <span class="v" data-v="ambush" data-x></span>、反撃なし、相手は混乱します。奇襲になるのは、隠れてから最初の1回だけです。</li>
       <li>隠れた部隊の攻撃範囲に敵が入ると、「奇襲する／見送る」を選べます。奇襲された敵はその場で止まります。</li>
+      <li>隠れた部隊が敵の隣で旋回・移動すると、その敵の前方（左右90°以内）なら見つかって姿を現します。敵の背後側なら隠れたままですが、気配を悟られ、次の奇襲の倍率が <span class="v" data-v="ambushNoticed" data-x></span> に下がり、相手も混乱ではなく隊列の乱れにとどまります。隠蔽し直せば元に戻ります。</li>
       <li>隠れた部隊のマスに入ろうとすると遭遇します。相手の攻撃範囲の中からなら奇襲を受け、背後からなら奇襲なしで見つけます。</li>
       <li><b>弓兵</b>は、2マス以上離れて射れば隠れたままでいられます。撃たれた側には、矢の来た方向だけが分かります。2発目以降は通常の射撃で、もう一度隠蔽すると再び奇襲できます。</li>
     </ul>
@@ -201,7 +205,7 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
       <li>1回の工事で積める耐久は「兵数 × <span class="v" data-v="buildRate"></span>」です。</li>
       <li>1回の攻撃で壊せる耐久は「兵数 × <span class="v" data-v="demolishRate"></span> × 兵種の比」です（槍兵 <span data-v="fenceVs.spear"></span>、騎兵 <span data-v="fenceVs.cav"></span>、弓兵 <span data-v="fenceVs.archer"></span>）。</li>
       <li>工事も破壊も、小数点以下は切り捨てです。1に満たない分は効きません。</li>
-      <li>工事をするとその部隊の行動は終わり、次の自軍の手番まで無防備になります。攻撃されると奇襲の倍率を受け、反撃できず、隊列が乱れます。</li>
+      <li>工事をするとその部隊の行動は終わり、次の自軍の手番まで無防備になります。攻撃されると奇襲の倍率を受け、反撃できず、混乱します。</li>
     </ul>
     <p id="buildExample" class="note"></p>
 
@@ -228,6 +232,7 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
       <tr><td><kbd>B</kbd></td><td>柵を作る（槍兵）</td></tr>
       <tr><td><kbd>F</kbd></td><td>陣地を築く・砦を修理する（槍兵）</td></tr>
       <tr><td><kbd>L</kbd></td><td>略奪する・蓄えを運び出す</td></tr>
+      <tr><td><kbd>X</kbd></td><td>隣の味方と入れ替える（そのあと相手をクリック）</td></tr>
       <tr><td><kbd>Z</kbd></td><td>取り消し（奇襲や遭遇など、相手に情報が伝わる出来事のあとは取り消せません）</td></tr>
       <tr><td><kbd>Enter</kbd></td><td>ターン終了</td></tr>
       <tr><td><kbd>Esc</kbd></td><td>選択の解除</td></tr>
