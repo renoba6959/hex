@@ -1,0 +1,75 @@
+// 朧 OBORO マップ：確認用
+HEX_DATA.maps.push({
+ "id": "kakunin",
+ "name": "確認用",
+ "cols": 14,
+ "rows": 10,
+ "terrain": {
+  "7,2": "mountain",
+  "8,2": "mountain",
+  "8,3": "mountain",
+  "11,2": "mountain",
+  "10,3": "mountain",
+  "10,2": "mountain",
+  "3,8": "forest",
+  "2,8": "forest",
+  "2,9": "forest",
+  "2,7": "forest",
+  "6,9": "forest",
+  "6,8": "forest",
+  "7,8": "forest",
+  "12,8": "forest",
+  "12,9": "forest",
+  "13,9": "forest",
+  "12,7": "forest",
+  "13,8": "forest",
+  "5,0": "forest",
+  "4,1": "forest",
+  "4,0": "forest",
+  "3,1": "forest",
+  "4,9": "forest",
+  "5,8": "forest",
+  "5,9": "forest",
+  "4,8": "forest",
+  "2,2": "forest",
+  "3,6": "hill",
+  "3,5": "hill",
+  "2,6": "hill",
+  "3,4": "hill",
+  "4,5": "hill",
+  "13,6": "hill",
+  "12,5": "hill",
+  "13,7": "hill",
+  "0,7": "hill",
+  "1,8": "hill",
+  "0,8": "hill"
+ },
+ "features": {},
+ "units": [
+  {
+   "side": "blue",
+   "type": "spear",
+   "col": 6,
+   "row": 5,
+   "f": 0,
+   "men": 100
+  },
+  {
+   "side": "red",
+   "type": "spear",
+   "col": 7,
+   "row": 5,
+   "f": 3,
+   "men": 100
+  },
+  {
+   "side": "blue",
+   "type": "cav",
+   "col": 8,
+   "row": 5,
+   "f": 4,
+   "men": 100
+  }
+ ],
+ "rev": 7
+});
