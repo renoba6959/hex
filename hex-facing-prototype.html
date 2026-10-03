@@ -289,7 +289,7 @@ function pathTo(u,goal,reach=1){
     const s=queue.splice(bi,1)[0];if(best.get(sk(s))!==s)continue;
     if(dist(s,goal)<=reach){const acts=[];for(let x=s;x.prev;x=x.prev)acts.unshift(x.act);return acts;}
     const push=n=>{const k=sk(n),o=best.get(k);if(!o||o.c>n.c){best.set(k,n);queue.push(n);}};
-    [-1,1].forEach(dl=>push({q:s.q,r:s.r,f:(s.f+dl+6)%6,c:s.c+cfg.turnCost,prev:s,act:{t:'turn',dl}}));
+    [-1,1,3].forEach(dl=>push({q:s.q,r:s.r,f:(s.f+dl+6)%6,c:s.c+turnCostOf(u,dl,false),prev:s,act:{t:'turn',dl}}));
     for(let d=0;d<6;d++){
       const nq=s.q+DIRS[d][0],nr=s.r+DIRS[d][1],k=key(nq,nr);
       if(!cells.has(k)||blocked.has(k)||(inZoc(nq,nr,u.side)&&dist({q:nq,r:nr},goal)>reach))continue;
@@ -681,14 +681,16 @@ async function reactions(m){
 }
 function askAmbush(h,m){return new Promise(res=>{state.prompt={h:h.id,m:m.id,res};render();});}
 function answerAmbush(go){const p=state.prompt;if(!p)return;state.prompt=null;p.res(go);}
+// 旋回（delta＝±1で60度）と回れ右（delta＝3で180度）。接敵中は高くつき、隊列が乱れる
+const turnCostOf=(u,delta,contact)=>Math.abs(delta)===3?(contact?cfg.contactAboutCost:cfg.aboutCost):(contact?cfg.contactTurnCost:cfg.turnCost);
 function tryTurn(u,delta){
   if(state.prompt||state.phase!=='battle'||state.winner||u.side!==state.side)return;
-  const contact=engaged(u),cost=contact?cfg.contactTurnCost:cfg.turnCost; // 隠れている部隊は交戦していないので、普段どおり
+  const contact=engaged(u),cost=turnCostOf(u,delta,contact); // 隠れている部隊は交戦していないので、普段どおり
   if(u.mp<cost)return;
   pushHistory();
   u.f=(u.f+delta+6)%6;u.mp-=cost;
   noticeCheck(u);
-  if(contact&&!u.dis){setDis(u,1);log(uname(u)+'が接触中に旋回、隊列が乱れた（攻防×'+cfg.disorder+'）','sys',privOf(u));}
+  if(contact&&!u.dis){setDis(u,1);log(uname(u)+'が接触中に'+(Math.abs(delta)===3?'回れ右':'旋回')+'、隊列が乱れた（攻防×'+cfg.disorder+'）','sys',privOf(u));}
   render();
 }
 function doAttack(a,t){
@@ -782,7 +784,7 @@ function planFor(u){
     const s=queue.splice(bi,1)[0];if(best.get(sk(s))!==s)continue;
     const push=n=>{const k=sk(n),o=best.get(k);if(!o||o.mp<n.mp){best.set(k,n);queue.push(n);}};
     const contact=!s.hid&&enemies.some(e=>dist(e,s)===1),tc=contact?cfg.contactTurnCost:cfg.turnCost; // 隠れたままなら交戦していない
-    if(s.mp>=tc)[-1,1].forEach(dl=>push({...s,f:(s.f+dl+6)%6,mp:s.mp-tc,dis:Math.max(s.dis|0,contact?1:0),prev:s,act:{t:'turn',dl}}));
+    [-1,1,3].forEach(dl=>{const c=turnCostOf(u,dl,contact);if(s.mp>=c)push({...s,f:(s.f+dl+6)%6,mp:s.mp-c,dis:Math.max(s.dis|0,contact?1:0),prev:s,act:{t:'turn',dl}});});
     for(let d=0;d<6;d++){
       const nq=s.q+DIRS[d][0],nr=s.r+DIRS[d][1],k=key(nq,nr);
       if(!cells.has(k)||occ.has(k))continue;
@@ -1077,7 +1079,7 @@ function renderPanel(sel,mine,v){
   }
   else if(!sel){ub.innerHTML='<p class="hint">部隊を選んでください。</p>';}
   else{
-    const U=cfg.units[sel.type],contact=engaged(sel),tc=contact?cfg.contactTurnCost:cfg.turnCost;
+    const U=cfg.units[sel.type],contact=engaged(sel),tc=turnCostOf(sel,1,contact),ac=turnCostOf(sel,3,contact);
     const canT=mine&&sel.mp>=tc;
     const st=[];if(sel.hidden&&(sel.side===v||v==null))st.push(sel.sprung?'隠蔽中（奇襲は済み）':sel.noticed?'隠蔽中（気配を悟られた。次の奇襲は×'+cfg.ambushNoticed+'）':'隠蔽中');if(sel.pending)st.push('隠蔽の準備中（手番の終わりに隠れる）');if(sel.worked)st.push('工事中（次の手番まで無防備）');
     if(sel.shotFrom!=null)st.push(DIR_NAME[sel.shotFrom]+'の方向から矢を受けた');if(contact)st.push('接触中');if(sel.dis)st.push(disName(sel)+'（攻防×'+disMul(sel)+(sel.dis===2?'、反撃できない':'')+'）');if(sel.attacked)st.push('攻撃済み');
@@ -1092,7 +1094,7 @@ function renderPanel(sel,mine,v){
       '<dt>射程</dt><dd>'+(U.rmin===U.rmax?U.rmin:U.rmin+'〜'+U.rmax)+'</dd>'+
       '<dt>地形</dt><dd>'+terLabel(sel)+'</dd>'+(featLabel(sel)?'<dt>拠点</dt><dd>'+featLabel(sel)+'</dd>':'')+
       '<dt>状態</dt><dd>'+(st.join('、')||'通常')+'</dd></dl>'+
-      (mine&&!busy?'<div class="row"><button id="bL"'+(canT?'':' disabled')+'>左に旋回（'+tc+'）</button><button id="bR"'+(canT?'':' disabled')+'>右に旋回（'+tc+'）</button></div>'+
+      (mine&&!busy?'<div class="row"><button id="bL"'+(canT?'':' disabled')+'>左に旋回（'+tc+'）</button><button id="bR"'+(canT?'':' disabled')+'>右に旋回（'+tc+'）</button><button id="bAbout"'+(sel.mp>=ac?'':' disabled')+'>回れ右（'+ac+'・R）</button></div>'+
         (contact&&!sel.dis?'<p class="hint" style="margin-top:.4rem">接触中に旋回すると隊列が乱れます（攻防×'+cfg.disorder+'）。</p>':'')+
         (sel.type==='supply'?(state.pick===sel.id?'<p class="hint" style="margin-top:.4rem">行き先のマスか、付いて行く味方の部隊をクリックしてください（Esc でやめる）。</p><div class="row"><button class="ghost" id="bPickX">やめる</button></div>'
           :'<div class="row"><button id="bOrder">往復を命じる</button>'+(sel.order?'<button class="ghost" id="bOrderX">往復を解除</button>':'')+'</div><p class="hint" style="margin-top:.3rem">本陣と行き先を自動で往復し、手番のはじめに動きます。積み荷が'+Math.round(cfg.supplyReturn*100)+'%を切ると本陣へ戻って積み込みます。手で動かすと解除されます。</p>'):'')+
@@ -1110,7 +1112,7 @@ function renderPanel(sel,mine,v){
   }
   const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
   on('bEnd',endTurn);on('bUndo',undo);on('bNew',()=>newGame(false));on('bEdit',editFormation);on('bCfg',openSettings);on('bMaps2',openMaps);on('bMan',openManual);
-  on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));
+  on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));on('bAbout',()=>tryTurn(sel,3));
   on('bSwap',()=>{state.swap=sel.id;render();});on('bSwapX',()=>{state.swap=null;render();});
   on('bLoot',()=>loot(sel));on('bBurn',()=>{if(confirm(burnTarget(sel)+'を焼き払いますか？元に戻せません。'))burn(sel);});
   on('bOrder',()=>{state.pick=sel.id;render();});on('bPickX',()=>{state.pick=null;render();});on('bOrderX',()=>{sel.order=null;log(uname(sel)+'の往復を解除','sys',sel.side);render();});
@@ -1163,6 +1165,7 @@ document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||busy||state.prompt)return;
   const sel=state.selected!=null?byId(state.selected):null;
   const turn=dl=>{if(!sel)return;if(state.phase==='setup')rotateSetup(sel,dl);else tryTurn(sel,dl);};
+  if(e.key==='r'||e.key==='R'){turn(3);return;}
   if(e.key==='q'||e.key==='Q')turn(-1);
   else if(e.key==='e'||e.key==='E')turn(1);
   else if(e.key==='z'||e.key==='Z'){undo();}

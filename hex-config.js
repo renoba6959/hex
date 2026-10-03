@@ -8,7 +8,7 @@ const DEFAULTS = {
   },
   base:2, side:1.5, rear:2.0, disorder:0.9, confusion:0.7, counter:0.8, // disorder＝隊列の乱れ（軽い）、confusion＝混乱（重い。反撃もできない）
   obliqueAtk:0.9, obliqueDef:1.1, // 斜め前の敵を攻撃するときの攻撃倍率、斜め前から攻撃されたときの損害倍率
-  turnCost:2, contactTurnCost:4, mvF:1, mvFD:2, mvRD:2, mvR:3,
+  turnCost:1, contactTurnCost:2, aboutCost:2, contactAboutCost:4, mvF:1, mvFD:2, mvRD:2, mvR:2, // 旋回（60度）、回れ右（180度）。接敵中は高くつき、隊列が乱れる
   spearFrontDef:1.5,
   // 地形：move＝進入時の追加コスト、def／atk＝そこにいる部隊の防御・攻撃倍率
   terrain:{
@@ -46,7 +46,7 @@ const DEFAULTS = {
 };
 const MULT_FIELDS = [
   ['base','殺傷係数（兵士1人あたり）'],['obliqueAtk','斜め前の敵を攻撃するときの攻撃倍率'],['obliqueDef','斜め前から攻撃されたときの損害倍率'],['side','斜め後ろからの倍率'],['rear','真後ろからの倍率'],['disorder','隊列の乱れの攻防倍率（接敵中の旋回・入れ替え）'],['confusion','混乱の攻防倍率（奇襲・工事中の襲撃。反撃もできない）'],['counter','反撃の倍率（0で反撃なし）'],
-  ['turnCost','旋回コスト（60度）'],['contactTurnCost','接触中の旋回コスト'],
+  ['turnCost','旋回コスト（60度）'],['contactTurnCost','接触中の旋回コスト'],['aboutCost','回れ右のコスト（180度）'],['contactAboutCost','接触中の回れ右のコスト'],
   ['mvF','前進コスト'],['mvFD','斜め前への移動コスト'],['mvRD','斜め後ろへの移動コスト'],['mvR','後退コスト'],
   ['spearFrontDef','槍兵の正面対騎兵防御'],['cavForest','騎兵の森での攻撃倍率'],['moraleRecover','士気の回復（手番ごとに、敵と接していないとき）'],['desertLine','脱走が出はじめる士気'],['desertMax','士気0での脱走の割合（手番ごとに）'],
   ['lossMorale','兵を失ったときの士気の低下（最初の兵数の1%あたり）'],['flankMorale','側面・背後・奇襲を受けたときの士気の低下'],['killMorale','敵を壊滅させたときの士気の上昇'],['allyLostMorale','近く（2マス）の味方が壊滅したときの士気の低下'],

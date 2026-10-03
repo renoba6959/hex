@@ -125,7 +125,7 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     </table>
     <ul>
       <li>斜め前に動くと、その方向を向きます。</li>
-      <li>旋回（60度）は移動力 <span class="v" data-v="turnCost"></span>。敵と接しているときは <span class="v" data-v="contactTurnCost"></span> かかり、隊列が乱れます。隠れている部隊は敵に知られていないので、敵の隣でも普段どおり旋回できます。</li>
+      <li>旋回（60度）は移動力 <span class="v" data-v="turnCost"></span>、回れ右（180度）は <span class="v" data-v="aboutCost"></span>。敵と接しているときは旋回 <span class="v" data-v="contactTurnCost"></span>・回れ右 <span class="v" data-v="contactAboutCost"></span> かかり、隊列が乱れます。隠れている部隊は敵に知られていないので、敵の隣でも普段どおり旋回できます。</li>
       <li>地形や拠点に入るときは、追加のコストがかかります（<a href="#terrain">地形</a>・<a href="#bases">拠点</a>）。</li>
       <li><b>ZOC</b>：敵の正面側の隣のマスに入ると、その手番の移動は止まります。隠れている部隊は ZOC を持ちません。</li>
       <li><b>入れ替え</b>（X）：隣の味方と位置を入れ替えられます（前線と後方の交代など）。両方がそれぞれ相手のマスへの移動コストを払い、向きはそのままです。敵と接していると両方の隊列が乱れます。攻撃済み・隠蔽中・隠蔽の準備中の部隊はできません。</li>
@@ -236,6 +236,7 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     <table>
       <tr><td><kbd>クリック</kbd></td><td>部隊を選ぶ／隣のマスへ移動／敵や拠点を攻撃</td></tr>
       <tr><td><kbd>Q</kbd> <kbd>E</kbd></td><td>左・右に旋回</td></tr>
+      <tr><td><kbd>R</kbd></td><td>回れ右（180度）</td></tr>
       <tr><td><kbd>H</kbd></td><td>隠蔽する</td></tr>
       <tr><td><kbd>M</kbd></td><td>隠蔽行軍と通常行軍の切り替え</td></tr>
       <tr><td><kbd>B</kbd></td><td>柵を作る（槍兵）</td></tr>
