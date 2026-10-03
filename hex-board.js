@@ -99,7 +99,7 @@ function cleanMap(m){
       Object.keys(out.features).forEach(x=>{const o=out.features[x];if(o.type==='honjin'&&o.side===f.side)delete out.features[x];}); // 本陣は各軍に1つ
       out.features[k]={type:'honjin',side:f.side};
     }else out.features[k]={type:f.type};
-    // 本陣・村・陣地の蓄え（人×ターン）。本陣は書かなければ無限、ほかは書かなければなし
+    // 本陣・村・陣地の蓄え（1人1食分＝1）。本陣は書かなければ無限、ほかは書かなければなし
     if((f.type==='honjin'||f.type==='village'||f.type==='jinchi')&&f.stock!=null&&f.stock!==''&&Number(f.stock)>=0)out.features[k].stock=Math.round(Number(f.stock));
   });
   // 中央を失った砦のかけらは消す

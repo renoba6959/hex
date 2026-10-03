@@ -42,6 +42,7 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
       <li><a href="#move">向きと移動</a></li>
       <li><a href="#attack">攻撃</a></li>
       <li><a href="#terrain">地形</a></li>
+      <li><a href="#time">時刻と夜</a></li>
       <li><a href="#sight">視界</a></li>
       <li><a href="#ambush">伏兵</a></li>
       <li><a href="#bases">拠点</a></li>
@@ -85,18 +86,18 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
       <tr><td>側面・背後から攻撃される、奇襲を受ける</td><td>さらに −<span data-v="flankMorale"></span></td></tr>
       <tr><td>近く（2マス以内）の味方が壊滅する</td><td>−<span data-v="allyLostMorale"></span></td></tr>
       <tr><td>敵の部隊を壊滅させる</td><td>+<span data-v="killMorale"></span></td></tr>
-      <tr><td>本陣を占領される</td><td>全部隊 −<span data-v="honjinLossMorale"></span>、占領中は毎ターン −<span data-v="honjinOccupiedMorale"></span></td></tr>
+      <tr><td>本陣を占領される</td><td>全部隊 −<span data-v="honjinLossMorale"></span>、占領中は手番ごとに −<span data-v="honjinOccupiedMorale"></span></td></tr>
       <tr><td>本陣を奪い返す</td><td>全部隊 +<span data-v="honjinRetakeMorale"></span></td></tr>
     </table>
 
     <h2 id="supply">兵糧と補給</h2>
-    <p>兵糧は「人数 × ターン」で数えます。部隊は <span class="v" data-v="foodTurns"></span> ターン分の兵糧を持ち、自軍の手番の終わりに今いる人数分を食べます。兵が減れば、残りの兵糧は長くもちます。</p>
+    <p>兵糧は「1人1食分＝1」で数えます。食事は朝と夜の1日2回で、その時刻の自軍の手番の終わりに、今いる人数分を食べます。部隊は <span class="v" data-v="foodDays"></span> 日分（1人あたり食事の回数分）の兵糧を持ちます。兵が減れば、残りの兵糧は長くもちます。</p>
     <ul>
-      <li>兵糧が尽きると、手番ごとに士気が <span class="v" data-v="hungerMorale"></span> 下がります。盤面では、残り1ターン分以下で「糧」、尽きると「飢」の印が出ます。</li>
+      <li>兵糧が尽きると、食事を抜くたびに士気が <span class="v" data-v="hungerMorale"></span> 下がります（1日で2回）。盤面では、残り1日分以下で「糧」、尽きると「飢」の印が出ます。</li>
       <li>補給が届いている部隊は、敵と接していなければ士気が回復します。届いていなければ回復しません。</li>
       <li>盤面では、補給の届く範囲（本陣と、積み荷のある輜重から）を緑の点線で囲んで示します。輜重を選ぶと、その輜重が配れる範囲がうすい緑になります。「補給範囲を表示」で消せます。</li>
       <li><b>本陣</b>：<span data-v="honjinSupplyRange"></span> マス以内の部隊には、本陣から直接兵糧が届きます。占領されている間は届きません。</li>
-      <li><b>輜重</b>：1人あたり <span data-v="supplyCap"></span>（人×ターン）を運べます。手番のはじめに、<span data-v="supplyRange"></span> マス以内の味方へ、残りの少ない部隊から順に配ります。</li>
+      <li><b>輜重</b>：1人あたり <span data-v="supplyCap"></span>（食）を運べます。手番のはじめに、<span data-v="supplyRange"></span> マス以内の味方へ、残りの少ない部隊から順に配ります。</li>
       <li>輜重は本陣の隣で積み込みます。積み荷が少ないときの積み込みにはその手番を使います（動けません）。少し減っただけなら継ぎ足すだけで動けます。</li>
     </ul>
     <h3>蓄え・略奪・焼き払い</h3>
@@ -156,10 +157,18 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     <table id="terrainTable"></table>
     <p>騎兵は山に入れず、森から攻撃すると力が落ちます（×<span data-v="cavForest"></span>）。川は隣り合う川マスどうしでつながった流れとして描かれます。</p>
 
+    <h2 id="time">時刻と夜</h2>
+    <p>戦闘は「1日目：朝」から始まり、青と赤が1回ずつ動くたびに、朝 → 昼 → 夜 → 深夜 → 次の日の朝と進みます。</p>
+    <ul>
+      <li><b>夜</b>（夜・深夜）は視界が狭くなり、前方 <span class="v" data-v="visFrontNight"></span> マス、後方 <span class="v" data-v="visRearNight"></span> マスしか見えません（後ろはすぐ隣も見えません）。</li>
+      <li><b>夜襲</b>：夜に、相手から見えていない位置（背後など）から攻撃すると、損害 <span class="v" data-v="nightRaid" data-x></span> で、相手は隊列が乱れます。攻撃すれば位置は知られます。</li>
+      <li><b>暗闇での遭遇</b>：見えていない敵のマスに入ろうとすると遭遇します。動いた側はそこで止まり、両方の隊列が乱れます。</li>
+    </ul>
+
     <h2 id="sight">視界</h2>
     <p>部隊は、見えている範囲の敵しか分かりません。自軍のどれかの部隊から見えていれば、その敵は画面に出ます。見えていないマスは暗くなります。</p>
     <ul>
-      <li>前方（攻撃できる向き、左右90°まで）は <span class="v" data-v="visFront"></span> マス先まで、それ以外は <span class="v" data-v="visRear"></span> マス先まで見えます。</li>
+      <li>前方（攻撃できる向き、左右90°まで）は <span class="v" data-v="visFront"></span> マス先まで、それ以外は <span class="v" data-v="visRear"></span> マス先まで見えます（夜は狭くなります。<a href="#time">時刻と夜</a>）。</li>
       <li>森・丘・山は、その向こうへの視線をさえぎります（丘は起伏があるので、手前の丘は見えても奥は見えません）。森の中は、隣のマスからしか見えません。</li>
       <li>丘・山の上からは、視界が <span class="v" data-v="visHigh"></span> マス伸び、森や丘越しに見渡せます。山の向こうは見えません。</li>
       <li>見失った敵は、最後に見た位置に「？」の印が残ります。そのマスが見えるようになって、敵がいなければ印は消えます。</li>

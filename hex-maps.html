@@ -159,7 +159,7 @@ function drawTool(){
   }else if(mode==='features'){
     const F=[['honjin-blue','青の本陣'],['honjin-red','赤の本陣'],['village','村'],['jinchi','陣地'],['fort','砦（7）'],['fence','柵'],['none','消す']];
     t.innerHTML='<div class="pick">'+F.map(([f,l])=>'<button class="'+(f===featBrush?(f==='honjin-blue'?'b-blue ':f==='honjin-red'?'b-red ':'')+'on':'ghost')+'" data-f="'+f+'">'+l+'</button>').join('')+'</div>'+
-      (featHasStock()?'<div class="row" style="margin-top:.6rem"><label class="chk">蓄え <input type="number" min="0" step="100" id="iStock" value="'+esc(featStock)+'" placeholder="'+(featBrush.startsWith('honjin')?'空欄で無限':'空欄でなし')+'"> 人×ターン</label></div>'+
+      (featHasStock()?'<div class="row" style="margin-top:.6rem"><label class="chk">蓄え <input type="number" min="0" step="100" id="iStock" value="'+esc(featStock)+'" placeholder="'+(featBrush.startsWith('honjin')?'空欄で無限':'空欄でなし')+'"> 食（1人1食分＝1）</label></div>'+
         '<p class="hint">この値で置きます。置いてある'+(featBrush.startsWith('honjin')?'本陣':'同じ拠点')+'をクリックすると、蓄えだけ書き換えます'+(featBrush==='fort'?'（砦は7マスで1つの蓄え）':'')+'。</p>':'')+
       '<p class="hint" style="margin-top:.5rem">本陣は各軍に1つで、置き直すと前の本陣は消えます。敵に占領されるとその軍の士気が大きく下がります。村は隠れられて兵が回復します。陣地（1マス）と砦は中の部隊の防御を上げます。砦は選んだマスを中央に周りの6マスごと置かれ、中央が特に堅くなります（どこか1マスを消すと砦全体が消えます）。柵は騎兵を止めます。柵・陣地・砦は攻撃で壊せます。本陣・村・陣地・砦には兵糧の蓄えを持たせられます。</p>';
     t.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{featBrush=b.dataset.f;drawTool();});

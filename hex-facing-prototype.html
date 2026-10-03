@@ -129,7 +129,7 @@ function newGame(edit){
   units.filter(u=>cavBlocked(u.type,u)).forEach(u=>{const c=[...cells.values()].filter(c=>!cavBlocked(u.type,c)&&!units.some(x=>x.q===c.q&&x.r===c.r)).sort((a,b)=>dist(a,u)-dist(b,u))[0];if(c){u.q=c.q;u.r=c.r;}}); // 山に置かれた騎兵は近くの山以外へよける
   renumber(units);
   state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false},stock:{}};
-  featureAt.forEach((f,k)=>{if(holdsStock(f))state.stock[k]=stockOfFeat(f);}); // 本陣・村・陣地・砦の蓄え（人×ターン）
+  featureAt.forEach((f,k)=>{if(holdsStock(f))state.stock[k]=stockOfFeat(f);}); // 本陣・村・陣地・砦の蓄え（1人1食分＝1）
   if(!edit&&canStart()){startBattle();return;} // 保存済みの配置でそのまま始める
   log(canStart()?'配置：部隊の位置と向きを決めてください':'このマップには両軍の部隊がそろっていません。マップ編集で部隊を置いてください','sys');render();
 }
@@ -146,14 +146,14 @@ function startBattle(){
   const pick=aiPick==='map'?(findMap(loadMaps(),state.mapId).ai||'random'):aiPick,ks=Object.keys(AI_STYLES);
   state.aiStyle=pick==='random'?ks[Math.floor(Math.random()*ks.length)]:pick;state.aiSecret=pick==='random';
   log('戦闘開始　青軍'+sideMen('blue')+'人、赤軍'+sideMen('red')+'人','sys');
-  log('第1ターン　青軍の手番','sys');startSide('blue');render();beginSide('blue');
+  log(timeLabel()+'　青軍の手番','sys');startSide('blue');render();beginSide('blue');
 }
 /* ---- 配置 ---- */
 const DEF_F={blue:0,red:3}; // 青は右、赤は左を向く
 function makeUnit(id,side,type,q,r,f,men){
   const men0=Math.max(1,Math.round(men||cfg.units[type].men));
   return {id,no:0,side,type,q,r,f:((f|0)%6+6)%6,men0,hp:men0*cfg.units[type].hp,mp:0,attacked:false,dis:0,
-    food:men0*cfg.foodTurns,cargo:type==='supply'?men0*cfg.supplyCap:0,order:null,supplied:true,starving:false, // 兵糧（人×ターン）、輜重の積み荷、往復の命令
+    food:men0*cfg.foodDays*2,cargo:type==='supply'?men0*cfg.supplyCap:0,order:null,supplied:true,starving:false, // 兵糧（1人1食分＝1）、輜重の積み荷、往復の命令
     morale:100,hidden:false,pending:false,sprung:false,mark:null,shotFrom:null,worked:false,exposed:false}; // worked＝工事で手番を終えた（次の手番まで無防備）
   // hidden＝隠蔽中、pending＝手番の終わりに隠れる、sprung＝この隠蔽での奇襲は済んだ、mark＝敵が最後に見た位置、shotFrom＝矢を受けた方向
 }
@@ -210,9 +210,15 @@ function burn(u){
   u.attacked=true;u.mp=0;state.history=[];if(u.hidden)reveal(u,'火を放って姿を現した');
   log(uname(u)+'が'+what+'を焼き払った','kill');render();
 }
+/* ---- 時刻：1回の手番の巡りで朝 → 昼 → 夜 → 深夜 → 次の日の朝 ---- */
+const SLOTS=['朝','昼','夜','深夜'];
+const slotOf=()=>(Math.max(1,state.turn)-1)%4,dayOf=()=>Math.floor((Math.max(1,state.turn)-1)/4)+1;
+const isNight=()=>state&&state.phase==='battle'&&slotOf()>=2;
+const timeLabel=()=>dayOf()+'日目：'+SLOTS[slotOf()];
 /* ---- 兵糧と補給 ---- */
-const foodMax=u=>menOf(u)*cfg.foodTurns,cargoMax=u=>u.men0*cfg.supplyCap,foodTurnsMax=()=>cfg.foodTurns-1;
-const foodTurnsOf=u=>menOf(u)?Math.floor((u.food??0)/menOf(u)+1e-9):0;
+const MEALS=2,mealTime=()=>slotOf()===0||slotOf()===2; // 食事は朝と夜の1日2回、1人1食分＝1
+const foodMax=u=>menOf(u)*cfg.foodDays*MEALS,cargoMax=u=>u.men0*cfg.supplyCap,foodDaysMax=()=>cfg.foodDays-1;
+const foodDaysOf=u=>menOf(u)?Math.floor((u.food??0)/menOf(u)+1e-9)/MEALS:0; // 残りの兵糧（日分、半日＝1食刻み）
 const hqReady=side=>{const hq=honjinOf(side);return hq&&!state.taken[side]&&(state.stock[key(hq.q,hq.r)]??Infinity)>0?hq:null;}; // 占領されておらず、蓄えが残っている本陣
 // 手番のはじめ：本陣のそばの輜重は積み込む。積み荷が少ない（supplyReturn 未満）ときの積み込みはその手番を使い、
 // 少し減っただけなら継ぎ足すだけで動ける。そのあと本陣と輜重が周りの部隊へ兵糧を配る
@@ -225,19 +231,20 @@ function supplyTick(side){
     if(big){u.mp=0;log(uname(u)+'が本陣で積み込み（'+u.cargo+'、この手番は動けない）','sys',u.side);}
   });
   const fill=(u,give)=>{const need=Math.max(0,foodMax(u)-u.food),g=Math.min(need,give);u.food+=g;u.supplied=true;return g;};
-  if(hq)us.filter(u=>dist(u,hq)<=cfg.honjinSupplyRange).sort((a,b)=>foodTurnsOf(a)-foodTurnsOf(b)).forEach(u=>{const need=Math.max(0,foodMax(u)-u.food);if(need>0)u.food+=take(need);if((state.stock[hk]??1)>0||need===0)u.supplied=true;});
+  if(hq)us.filter(u=>dist(u,hq)<=cfg.honjinSupplyRange).sort((a,b)=>foodDaysOf(a)-foodDaysOf(b)).forEach(u=>{const need=Math.max(0,foodMax(u)-u.food);if(need>0)u.food+=take(need);if((state.stock[hk]??1)>0||need===0)u.supplied=true;});
   // 輜重は、残りの少ない部隊から順に配る
   us.filter(s=>s.type==='supply'&&s.cargo>0).forEach(s=>{
-    us.filter(u=>dist(u,s)<=cfg.supplyRange).sort((a,b)=>foodTurnsOf(a)-foodTurnsOf(b)).forEach(u=>{if(s.cargo>0)s.cargo-=fill(u,s.cargo);});
+    us.filter(u=>dist(u,s)<=cfg.supplyRange).sort((a,b)=>foodDaysOf(a)-foodDaysOf(b)).forEach(u=>{if(s.cargo>0)s.cargo-=fill(u,s.cargo);});
   });
 }
-// 手番の終わり：今いる人数分を食べる。足りなければ兵糧切れで士気が下がる
+// 朝と夜の手番の終わりに食事：今いる人数分を食べる。足りなければ兵糧切れで士気が下がる
 function eatTick(side){
+  if(!mealTime())return;
   state.units.filter(u=>u.side===side).forEach(u=>{
     const eat=menOf(u);
     if(u.food>=eat){u.food-=eat;u.starving=false;return;}
     u.food=0;u.starving=true;shiftMorale(u,-cfg.hungerMorale);
-    log(uname(u)+'は兵糧が尽きた（士気−'+cfg.hungerMorale+'、士気'+moraleOf(u)+'）','sys',privOf(u));
+    log(uname(u)+'は兵糧が尽きて食事を抜いた（士気−'+cfg.hungerMorale+'、士気'+moraleOf(u)+'）','sys',privOf(u));
   });
 }
 // 補給が届くマス（本陣と、積み荷のある輜重から）
@@ -291,7 +298,7 @@ function pathTo(u,goal,reach=1){
 // AIの輜重：兵糧の残りが少ない味方（同じなら本陣から遠い前線）へ往復する。知っている敵が2マス以内なら本陣へ下がる
 function aiSupplyOrders(side){
   const hq=honjinOf(side),foes=state.units.filter(e=>e.side!==side&&e.type!=='supply'&&spotted(e,side));
-  const need=state.units.filter(u=>u.side===side&&u.type!=='supply').sort((a,b)=>foodTurnsOf(a)-foodTurnsOf(b)||(hq?dist(b,hq)-dist(a,hq):0))[0];
+  const need=state.units.filter(u=>u.side===side&&u.type!=='supply').sort((a,b)=>foodDaysOf(a)-foodDaysOf(b)||(hq?dist(b,hq)-dist(a,hq):0))[0];
   state.units.filter(u=>u.side===side&&u.type==='supply').forEach(u=>{
     if(!need){u.order=null;return;}
     if(!u.order)u.order={unit:need.id,phase:u.cargo<cargoMax(u)*cfg.supplyReturn?'back':'out'};else u.order.unit=need.id;
@@ -377,7 +384,8 @@ function sightOf(u,round=false){ // round＝向きが分からないので全方
   const out=new Set([key(u.q,u.r)]),high=terOf(u)==='hill'||terOf(u)==='mountain',add=high?cfg.visHigh:0;
   const blocks=p=>{const t=terOf(p);return t==='mountain'||((t==='forest'||t==='hill')&&!high);}; // 丘は起伏があるので、低いところからはその奥が見えない
   cells.forEach((c,k)=>{
-    const d=dist(u,c);if(d===0||d>(round||relAngle(u,c)<=90+EPS?cfg.visFront:cfg.visRear)+add)return;
+    const night=isNight(),F=night?cfg.visFrontNight:cfg.visFront,Rr=night?cfg.visRearNight:cfg.visRear; // 夜は視界が狭く、後ろはほとんど見えない
+    const d=dist(u,c);if(d===0||d>(round||relAngle(u,c)<=90+EPS?F:Rr)+add)return;
     if(d>1&&terOf(c)==='forest')return;
     if(hexLine(u,c).some(([p1,p2])=>blocks(p1)&&blocks(p2)))return; // 間のマスが1つでもさえぎれば見えない（境目をかすめるときは両側ともさえぎる場合だけ）
     out.add(k);
@@ -386,7 +394,7 @@ function sightOf(u,round=false){ // round＝向きが分からないので全方
 }
 const visCache=new Map();
 function visOf(side){ // その軍の部隊から見えるマス（部隊の位置と向きが変わらなければ使い回す）
-  const us=state.units.filter(u=>u.side===side),sig=side+cfg.visFront+','+cfg.visRear+','+cfg.visHigh+'|'+us.map(u=>u.q+','+u.r+','+u.f).join(';');
+  const us=state.units.filter(u=>u.side===side),sig=side+(isNight()?'N':'D')+cfg.visFront+','+cfg.visRear+','+cfg.visHigh+','+cfg.visFrontNight+','+cfg.visRearNight+'|'+us.map(u=>u.q+','+u.r+','+u.f).join(';');
   let v=visCache.get(sig);if(v)return v;
   v=new Set();us.forEach(u=>sightOf(u).forEach(k=>v.add(k)));
   if(visCache.size>200)visCache.clear();visCache.set(sig,v);return v;
@@ -440,12 +448,15 @@ function canAttack(a,t){
   return canStrike(a,t);
 }
 const surprise=u=>u.hidden&&!u.sprung; // この攻撃が奇襲になるか
+// 夜襲になるか：夜に、相手の軍から見えていない（攻撃して位置が知られてもいない）部隊が攻撃する。伏兵の奇襲とは別
+const nightRaid=(a,t,amb)=>!amb&&isNight()&&!a.hidden&&!!state.units.find(x=>x===a)&&!spotted(a,t.side);
 // 隠蔽は森・丘・山で。隠れたまま奇襲を済ませた弓兵は、もう一度隠蔽して奇襲をやり直せる
 const canHide=u=>state.phase==='battle'&&u.side===state.side&&(!u.hidden||u.sprung)&&!u.pending&&!u.attacked&&onCover(u)&&!inContact(u)&&u.mp>=cfg.hideCost;
 function computeAttack(a,t,amb){
   const r=relAngle(t,a);let cat,dm;
   if(r<=30+EPS){cat='正面';dm=1}else if(r<=90+EPS){cat='斜め前';dm=cfg.obliqueDef}else if(r<=150+EPS){cat='斜め後ろ';dm=cfg.side}else{cat='真後ろ';dm=cfg.rear}
   const oa=relAngle(a,t)>30+EPS?cfg.obliqueAtk:1; // 自分の斜め前の敵を攻撃すると力が落ちる
+  const nr=nightRaid(a,t,amb)?cfg.nightRaid:1; // 夜襲：相手から見えていない位置からの攻撃
   const A=cfg.units[a.type],D=cfg.units[t.type],mx=cfg.matrix[a.type][t.type];
   const ad=disMul(a),dd=disMul(t);
   const sf=(t.type==='spear'&&a.type==='cav'&&r<=90+EPS)?cfg.spearFrontDef:1;
@@ -454,9 +465,10 @@ function computeAttack(a,t,amb){
   // 拠点の防御。柵・陣地・砦は耐久の割合だけ効く（例：耐久100/500なら、上がり分の20%）
   const ft=featOf(t),st=structType(t);
   const fd=+(st?1+(fullDef(t)-1)*ratioOf(t):ft?.type==='village'?cfg.villageDef:ft?.type==='honjin'&&ft.side===t.side&&!state.taken[t.side]?cfg.honjinDef:1).toFixed(2);
-  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*oa*dm*mx*ad*tam*am/(D.def*dd*sf*tdm*fd))); // ランチェスター：損害は攻撃側の兵数に比例
+  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*oa*nr*dm*mx*ad*tam*am/(D.def*dd*sf*tdm*fd))); // ランチェスター：損害は攻撃側の兵数に比例
   const notes=[cat+(dm!==1?' ×'+dm:'')];
   if(amb)notes.unshift((a.noticed?'気取られた奇襲 ×':'奇襲 ×')+am);
+  if(nr!==1)notes.unshift('夜襲 ×'+nr);
   if(wk)notes.unshift('工事中を襲撃 ×'+cfg.ambush);
   if(oa!==1)notes.push('斜め前へ攻撃 ×'+oa);
   if(mx!==1)notes.push('相性 ×'+mx);
@@ -491,13 +503,15 @@ function tryMove(u,d){
   if(!cells.has(key(nq,nr)))return;
   if(u.order&&!autoMoving){u.order=null;log(uname(u)+'の往復を解除（手で動かした）','sys',u.side);}
   const o=unitAt(nq,nr);
-  if(o&&(o.side===u.side||!o.hidden))return;
+  if(o&&(o.side===u.side||spotted(o,u.side)))return; // 見えている部隊のマスには入れない（見えていない敵なら遭遇）
   const cost=stepCost(u,d);if(u.mp<cost)return;
   if(o){ // 隠れた敵のいるマスに入ろうとした：遭遇して止まる。相手の攻撃範囲の中なら強制的に奇襲を受ける
     state.history=[];u.mp=0;
-    log('遭遇！ '+uname(u)+'が隠れていた'+uname(o)+'とぶつかった','kill');
+    log('遭遇！ '+uname(u)+'が'+(o.hidden?'隠れていた':'暗闇で見えていなかった')+uname(o)+'とぶつかった','kill');
     if(u.hidden)reveal(u,'ぶつかって姿を現した'); // ぶつかった以上、お互いに位置が分かる
-    if(canStrike(o,u))hiddenStrike(o,u,true);
+    if(!o.hidden){ // 暗闇で見えていなかった敵：両方とも隊列が乱れる
+      o.exposed=true;setDis(u,1);setDis(o,1);log('　暗闇でのぶつかり合いで、両方の隊列が乱れた','sys');
+    }else if(canStrike(o,u))hiddenStrike(o,u,true);
     else{o.hidden=false;o.sprung=false;o.mark=null;log('　'+uname(o)+'は背後を突かれる形で見つかった（奇襲なし）','sys');}
     render();return;
   }
@@ -677,8 +691,8 @@ function doAttack(a,t){
   if(state.phase!=='battle'||!canAttack(a,t)||state.winner)return;
   pushHistory();
   if(a.hidden){a.attacked=true;a.mp=0;hiddenStrike(a,t,!a.sprung);state.history=[];render();return;}
-  const res=computeAttack(a,t);
-  const tm=menOf(t),wk=t.worked;t.hp-=res.dmg;a.attacked=true;a.mp=0;a.exposed=true;if(wk)setDis(t,2); // 工事中を襲われると混乱する
+  const raid=nightRaid(a,t,false),res=computeAttack(a,t);
+  const tm=menOf(t),wk=t.worked;t.hp-=res.dmg;a.attacked=true;a.mp=0;a.exposed=true;if(wk)setDis(t,2);else if(raid)setDis(t,1); // 工事中を襲われると混乱、夜襲を受けると乱れる
   log(uname(a)+' → '+uname(t)+'：'+res.notes.join('、')+'、'+(tm-menOf(t))+'人減、残り'+menOf(t)+'人'+(wk?'（反撃なし・混乱）':''));
   spillStruct(a,t);shaken(t,tm-menOf(t),wk||res.cat==='斜め後ろ'||res.cat==='真後ろ');
   if(t.hp<=0)removeUnitDead(t,a);
@@ -711,7 +725,7 @@ function endTurn(){
   state.side=state.side==='blue'?'red':'blue';
   if(state.side==='blue')state.turn++;
   state.selected=null;state.history=[];state.pick=null;state.swap=null;
-  log('第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番','sys');startSide(state.side);render(); // 回復は手番の見出しのあとに記録
+  log(timeLabel()+'　'+SIDE_NAME[state.side]+'の手番','sys');startSide(state.side);render(); // 回復は手番の見出しのあとに記録
   beginSide(state.side);
 }
 
@@ -820,11 +834,11 @@ function evalState(u,s,ctx,hideEnd){
   let pos=(u.type==='archer'?-Math.abs(near-3)*3-(near===1?10:0):-near*3)*W.near/3;
   const hq=honjinOf(other(u.side));
   if(hq){if(V.q===hq.q&&V.r===hq.r)pos+=state.taken[other(u.side)]?20:80;else if(u.type!=='archer')pos-=dist(V,hq)*W.hq;} // 敵の本陣を目指す
-  // 補給：範囲の外に出るのは損。ただし兵糧に余裕がある（3ターン分以上）間はほとんど気にせず前に出る
-  const ft=foodTurnsOf(u);let sup=0;
+  // 補給：範囲の外に出るのは損。ただし兵糧に余裕がある（3日分以上）間はほとんど気にせず前に出る
+  const ft=foodDaysOf(u);let sup=0;
   // 兵糧が減ってきたら、蓄えのある場所（村・陣地・砦、占領した敵の本陣）へ取りに行く
-  if(ft<foodTurnsMax()){const spots=[...state.stock?Object.keys(state.stock):[]].filter(k=>state.stock[k]>0).map(k=>{const [q,r]=k.split(',').map(Number);return {q,r};}).filter(p=>lootSpot({...p,side:u.side}));
-    if(spots.length)sup+=(lootSpot({...V,side:u.side})?(cfg.foodTurns-ft)*12:-nearestDist(V,spots)*(cfg.foodTurns-ft)*1.5);}
+  if(ft<foodDaysMax()){const spots=[...state.stock?Object.keys(state.stock):[]].filter(k=>state.stock[k]>0).map(k=>{const [q,r]=k.split(',').map(Number);return {q,r};}).filter(p=>lootSpot({...p,side:u.side}));
+    if(spots.length)sup+=(lootSpot({...V,side:u.side})?(cfg.foodDays-ft)*12:-nearestDist(V,spots)*(cfg.foodDays-ft)*1.5);}
   if(!ctx.sup.has(key(V.q,V.r)))sup-=ft>=3?0.5:(4+(3-ft)*6)*(u.starving?2:1);
   // 士気が低く脱走が出る部隊は前に出ず、補給か本陣のほうへ下がって立て直す
   if(mor<cfg.desertLine){pos*=0.3;const home=[...state.units.filter(x=>x.side===u.side&&x.type==='supply'&&x.cargo>0),...(hqReady(u.side)?[hqReady(u.side)]:[])];if(home.length)pos-=nearestDist(V,home)*3;}
@@ -953,7 +967,7 @@ function render(){
     h+='<rect class="hpbg" x="-14" y="24" width="28" height="2"/><rect class="mor'+(moraleOf(u)<cfg.desertLine?' low':'')+'" x="-14" y="24" height="2" width="'+(28*moraleOf(u)/100).toFixed(1)+'"/>'; // 士気
     if(u.dis)h+='<text class="dis'+(u.dis===2?' conf':'')+'" x="14" y="-12">'+(u.dis===2?'混':'乱')+'</text>';
     if(u.hidden||u.pending)h+='<text class="badge'+(u.pending?' pend':'')+'" x="-20" y="-12">伏</text>';
-    if((u.side===v||v==null)&&(u.starving||foodTurnsOf(u)<=1))h+='<text class="badge food'+(u.starving?' out':'')+'" x="-20" y="4">'+(u.starving?'飢':'糧')+'</text>'; // 兵糧が残り少ない・尽きた
+    if((u.side===v||v==null)&&(u.starving||foodDaysOf(u)<=1))h+='<text class="badge food'+(u.starving?' out':'')+'" x="-20" y="4">'+(u.starving?'飢':'糧')+'</text>'; // 兵糧が残り少ない・尽きた
     if(u.shotFrom!=null){ // 矢の来た方向を示す矢印（向きだけで、距離は分からない）
       const o=toScreen(DIRS[u.shotFrom][0],DIRS[u.shotFrom][1]),L=Math.hypot(o.x,o.y),ux=o.x/L,uy=o.y/L,tip=L*0.5,base=L*0.8,w=5;
       h+='<polygon class="shot" points="'+(ux*tip).toFixed(1)+','+(uy*tip).toFixed(1)+' '+(ux*base-uy*w).toFixed(1)+','+(uy*base+ux*w).toFixed(1)+' '+(ux*base+uy*w).toFixed(1)+','+(uy*base-ux*w).toFixed(1)+'"/>';
@@ -1038,7 +1052,7 @@ function renderPanel(sel,mine,v){
   if(state.winner){
     tb.innerHTML='<div class="turn side-'+state.winner+'">'+SIDE_NAME[state.winner]+'の勝利</div>'+(aiRed&&state.aiStyle?'<p class="hint" style="margin-top:.2rem">赤軍の作戦：'+(state.aiSecret&&!state.winner?'？（決着まで伏せる）':AI_STYLES[state.aiStyle])+'</p>':'')+'<div class="row"><button id="bNew">もう一度</button><button class="ghost" id="bUndo"'+(state.history.length?'':' disabled')+'>取り消し</button><button class="ghost" id="bEdit">配置からやり直す</button><button class="ghost" id="bCfg">数値調整</button></div>';
   }else{
-    tb.innerHTML='<div class="turn side-'+state.side+'">第'+state.turn+'ターン　'+SIDE_NAME[state.side]+'の手番</div>'+
+    tb.innerHTML='<div class="turn side-'+state.side+'">'+timeLabel()+'　'+SIDE_NAME[state.side]+'の手番</div>'+(isNight()?'<p class="hint" style="margin-top:.2rem">夜：視界は前方'+cfg.visFrontNight+'マス・後方'+cfg.visRearNight+'マス</p>':'')+
       '<p class="hint" style="margin-top:.2rem">マップ：'+esc(state.mapName)+'</p>'+(aiRed&&state.aiStyle?'<p class="hint" style="margin-top:.2rem">赤軍の作戦：'+(state.aiSecret&&!state.winner?'？（決着まで伏せる）':AI_STYLES[state.aiStyle])+'</p>':'')+
       (busy?'<p class="hint" style="margin-top:.4rem">赤軍が行動中です…</p>':'')+
       '<div class="row"><button id="bEnd"'+(busy?' disabled':'')+'>ターン終了</button><button class="ghost" id="bUndo"'+(state.history.length&&!busy?'':' disabled')+'>取り消し</button><button class="ghost" id="bNew">最初から</button></div>'+
@@ -1064,7 +1078,7 @@ function renderPanel(sel,mine,v){
     ub.innerHTML='<div class="uname">'+uname(sel)+'</div><dl>'+
       '<dt>兵数</dt><dd>'+menOf(sel)+' / '+sel.men0+'人</dd>'+
       '<dt>士気</dt><dd>'+moraleOf(sel)+(moraleOf(sel)<cfg.desertLine?'（脱走が出ている）':'')+'</dd>'+
-      (sel.side===v||v==null?'<dt>兵糧</dt><dd>'+(sel.starving?'尽きている（毎ターン士気−'+cfg.hungerMorale+'）':'あと'+foodTurnsOf(sel)+'ターン分')+'（'+Math.round(sel.food)+'）、補給'+(sel.supplied?'が届いている':'が届いていない')+'</dd>'+
+      (sel.side===v||v==null?'<dt>兵糧</dt><dd>'+(sel.starving?'尽きている（食事のたびに士気−'+cfg.hungerMorale+'）':'あと'+foodDaysOf(sel)+'日分')+'（'+Math.round(sel.food)+'）、補給'+(sel.supplied?'が届いている':'が届いていない')+'</dd>'+
         (sel.type==='supply'?'<dt>積み荷</dt><dd>'+Math.round(sel.cargo)+' / '+cargoMax(sel)+'（'+cfg.supplyRange+'マス以内に配る）</dd>'+
           '<dt>往復</dt><dd>'+(!sel.order?'なし':(sel.order.unit!=null?(byId(sel.order.unit)?uname(byId(sel.order.unit)):'？'):'マス')+'へ'+(sel.order.phase==='back'?'（本陣へ戻る途中）':''))+'</dd>':''):'')+
       '<dt>移動力</dt><dd>'+(sel.side===state.side?sel.mp:U.mp)+' / '+U.mp+'</dd>'+

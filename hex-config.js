@@ -18,14 +18,14 @@ const DEFAULTS = {
     mountain:{move:3,def:1.5,atk:1.1} // 騎兵は進入不可
   },
   cavForest:0.6,
-  // 士気（部隊ごと、0〜100）：desertLine を切ると毎ターン脱走が出る（士気0で desertMax の割合）
+  // 士気（部隊ごと、0〜100）：desertLine を切ると手番ごとに脱走が出る（士気0で desertMax の割合）
   moraleRecover:10, desertLine:50, desertMax:0.5,
   lossMorale:0.5, flankMorale:10, killMorale:10, allyLostMorale:10, // 兵を失う（最初の兵数の1%あたり）、側面・背後・奇襲を受ける、敵を壊滅させる、近くの味方が壊滅する
-  honjinLossMorale:30, honjinOccupiedMorale:10, honjinRetakeMorale:15, // 本陣を占領された、占領されている間（毎ターン）、奪い返した
-  // 兵糧と補給：兵糧は「人数×ターン」で数える。部隊は foodTurns ターン分を持ち、手番の終わりに今いる人数分を食べる。尽きると士気が下がる
-  foodTurns:5, hungerMorale:20,
+  honjinLossMorale:30, honjinOccupiedMorale:10, honjinRetakeMorale:15, // 本陣を占領された、占領されている間（手番ごとに）、奪い返した
+  // 兵糧と補給：兵糧は「1人1食分＝1」で数える。食事は朝と夜の1日2回（自軍の手番の終わり）で、今いる人数分を食べる
+  foodDays:5, hungerMorale:10, // 部隊が持てる兵糧（日分＝2食×日）、食事を抜いたときの士気の低下（1日で2回）
   supplyCap:30, supplyRange:3, honjinSupplyRange:3, supplyReturn:0.25, // 輜重の積載（1人あたり）、配れる範囲、本陣から直接届く範囲、本陣へ戻る積み荷の残り（割合）
-  visFront:4, visRear:1, visHigh:1, // 視界：前方（左右90°まで）とそれ以外に見えるマス数、丘・山の上で伸びる分
+  visFront:4, visRear:1, visHigh:1, visFrontNight:2, visRearNight:0, nightRaid:1.2, // 夜（夜・深夜）の視界、夜襲（相手から見えていない位置からの攻撃）の倍率 // 視界：前方（左右90°まで）とそれ以外に見えるマス数、丘・山の上で伸びる分
   ambush:1.5, ambushNoticed:1.2, hideCost:2, hideMove:1, // ambushNoticed＝敵の背後で動いて気配を悟られたあとの奇襲の倍率 // 奇襲の倍率、隠蔽に必要な移動力、隠蔽行軍の追加コスト
   // 拠点：本陣・村（防御と、手番ごとの回復＝最初の兵数に対する割合）。柵・砦は耐久の割合に応じて防御が効く（作りかけ・壊れかけは弱い）
   honjinDef:1.3, honjinHeal:0.2, villageDef:1.2, villageHeal:0.1,
@@ -48,11 +48,11 @@ const MULT_FIELDS = [
   ['base','殺傷係数（兵士1人あたり）'],['obliqueAtk','斜め前の敵を攻撃するときの攻撃倍率'],['obliqueDef','斜め前から攻撃されたときの損害倍率'],['side','斜め後ろからの倍率'],['rear','真後ろからの倍率'],['disorder','隊列の乱れの攻防倍率（接敵中の旋回・入れ替え）'],['confusion','混乱の攻防倍率（奇襲・工事中の襲撃。反撃もできない）'],['counter','反撃の倍率（0で反撃なし）'],
   ['turnCost','旋回コスト（60度）'],['contactTurnCost','接触中の旋回コスト'],
   ['mvF','前進コスト'],['mvFD','斜め前への移動コスト'],['mvRD','斜め後ろへの移動コスト'],['mvR','後退コスト'],
-  ['spearFrontDef','槍兵の正面対騎兵防御'],['cavForest','騎兵の森での攻撃倍率'],['moraleRecover','士気の回復（毎ターン、敵と接していないとき）'],['desertLine','脱走が出はじめる士気'],['desertMax','士気0での脱走の割合（毎ターン）'],
+  ['spearFrontDef','槍兵の正面対騎兵防御'],['cavForest','騎兵の森での攻撃倍率'],['moraleRecover','士気の回復（手番ごとに、敵と接していないとき）'],['desertLine','脱走が出はじめる士気'],['desertMax','士気0での脱走の割合（手番ごとに）'],
   ['lossMorale','兵を失ったときの士気の低下（最初の兵数の1%あたり）'],['flankMorale','側面・背後・奇襲を受けたときの士気の低下'],['killMorale','敵を壊滅させたときの士気の上昇'],['allyLostMorale','近く（2マス）の味方が壊滅したときの士気の低下'],
-  ['honjinLossMorale','本陣を占領されたときの士気の低下（全部隊）'],['honjinOccupiedMorale','本陣を占領されている間の士気の低下（毎ターン）'],['honjinRetakeMorale','本陣を奪い返したときの士気の上昇（全部隊）'],
-  ['foodTurns','部隊が持てる兵糧（ターン分）'],['hungerMorale','兵糧切れの士気の低下（毎ターン）'],['supplyCap','輜重の積載（1人あたり、人×ターン）'],['supplyRange','輜重が兵糧を配れる範囲（マス）'],['honjinSupplyRange','本陣から直接兵糧が届く範囲（マス）'],['supplyReturn','輜重が本陣へ戻る積み荷の残り（割合）'],
-  ['visFront','前方の視界（マス）'],['visRear','後方の視界（マス）'],['visHigh','丘・山の上で伸びる視界（マス）'],['ambush','奇襲の倍率'],['ambushNoticed','気取られた奇襲の倍率（敵の背後で動いたあと）'],['hideCost','隠蔽に必要な移動力'],['hideMove','隠蔽行軍の追加コスト（1マス）'],
+  ['honjinLossMorale','本陣を占領されたときの士気の低下（全部隊）'],['honjinOccupiedMorale','本陣を占領されている間の士気の低下（手番ごとに）'],['honjinRetakeMorale','本陣を奪い返したときの士気の上昇（全部隊）'],
+  ['foodDays','部隊が持てる兵糧（日分）'],['hungerMorale','兵糧切れで食事を抜いたときの士気の低下（1回の食事ごと）'],['supplyCap','輜重の積載（1人あたり、食）'],['supplyRange','輜重が兵糧を配れる範囲（マス）'],['honjinSupplyRange','本陣から直接兵糧が届く範囲（マス）'],['supplyReturn','輜重が本陣へ戻る積み荷の残り（割合）'],
+  ['visFront','前方の視界（マス）'],['visRear','後方の視界（マス）'],['visHigh','丘・山の上で伸びる視界（マス）'],['visFrontNight','夜の前方の視界（マス）'],['visRearNight','夜の後方の視界（マス）'],['nightRaid','夜襲の倍率（相手から見えていない位置から攻撃）'],['ambush','奇襲の倍率'],['ambushNoticed','気取られた奇襲の倍率（敵の背後で動いたあと）'],['hideCost','隠蔽に必要な移動力'],['hideMove','隠蔽行軍の追加コスト（1マス）'],
   ['honjinDef','本陣にいる自軍の防御倍率'],['honjinHeal','本陣での回復（最初の兵数に対する割合）'],['villageDef','村にいる部隊の防御倍率'],['villageHeal','村での回復（最初の兵数に対する割合）'],['jinchiDef','陣地にいる部隊の防御倍率（完成時）'],['jinchiHp','陣地の耐久（完成に必要な工事量）'],['fortCoreDef','砦の中央にいる部隊の防御倍率'],['fortRingDef','砦の外周にいる部隊の防御倍率'],['fortHp','砦の耐久（1マスごと）'],['fortMove','陣地・砦に入る追加コスト'],
   ['fenceDef','柵にいる部隊の防御倍率（完成時）'],['fenceMove','柵に入る移動コスト'],['fenceHp','柵の耐久（完成に必要な工事量）'],['buildRate','工事量（兵士1人・1手番あたり）'],['demolishRate','破壊量（槍兵1人・1回あたり。基準）'],['structSpill','こもった部隊への攻撃で柵・砦に入る損傷の割合'],
   ['fenceVs.spear','柵・砦の壊しやすさ（槍兵＝基準の比）'],['fenceVs.cav','柵・砦の壊しやすさ（騎兵、槍兵に対する比）'],['fenceVs.archer','柵・砦の壊しやすさ（弓兵、槍兵に対する比）']
@@ -74,7 +74,7 @@ function sanitizeCfg(c){
   TER_TYPES.forEach(t=>{const T=c.terrain[t];T.move=Math.max(0,T.move);T.def=Math.max(0.1,T.def);T.atk=Math.max(0,T.atk);});
   ['moraleRecover','lossMorale','flankMorale','killMorale','allyLostMorale','honjinLossMorale','honjinOccupiedMorale','honjinRetakeMorale'].forEach(k=>{c[k]=Math.max(0,c[k]);});
   c.desertLine=Math.min(100,Math.max(1,c.desertLine));c.desertMax=Math.min(1,Math.max(0,c.desertMax));
-  c.foodTurns=Math.max(1,Math.round(c.foodTurns));c.hungerMorale=Math.max(0,c.hungerMorale);c.supplyCap=Math.max(0,c.supplyCap);
+  c.foodDays=Math.max(1,c.foodDays);c.visFrontNight=Math.max(1,Math.round(c.visFrontNight));c.visRearNight=Math.max(0,Math.round(c.visRearNight));c.nightRaid=Math.max(1,c.nightRaid);c.hungerMorale=Math.max(0,c.hungerMorale);c.supplyCap=Math.max(0,c.supplyCap);
   c.supplyRange=Math.max(0,Math.round(c.supplyRange));c.honjinSupplyRange=Math.max(0,Math.round(c.honjinSupplyRange));c.supplyReturn=Math.min(1,Math.max(0,c.supplyReturn));
   ['visFront','visRear','visHigh'].forEach(k=>{c[k]=Math.max(k==='visHigh'?0:1,Math.round(c[k]));});
   c.ambushNoticed=Math.max(1,c.ambushNoticed);c.disorder=Math.max(0.1,c.disorder);c.confusion=Math.max(0.1,c.confusion);
