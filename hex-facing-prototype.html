@@ -129,7 +129,10 @@ function newGame(edit){
   units.filter(u=>cavBlocked(u.type,u)).forEach(u=>{const c=[...cells.values()].filter(c=>!cavBlocked(u.type,c)&&!units.some(x=>x.q===c.q&&x.r===c.r)).sort((a,b)=>dist(a,u)-dist(b,u))[0];if(c){u.q=c.q;u.r=c.r;}}); // 山に置かれた騎兵は近くの山以外へよける
   renumber(units);
   state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false},stock:{}};
-  featureAt.forEach((f,k)=>{if(holdsStock(f))state.stock[k]=stockOfFeat(f);}); // 本陣・村・陣地・砦の蓄え（1人1食分＝1）
+  // 本陣・村・陣地・砦の蓄え（1人1食分＝1）。本陣を「全軍の何日分」で決めたマップは、開始時の兵数×2食×日数にする
+  featureAt.forEach((f,k)=>{if(!holdsStock(f))return;
+    if(f.type==='honjin'&&f.stockDays!=null){const eat=units.filter(u=>u.side===f.side).reduce((n,u)=>n+u.men0*(cfg.units[u.type].eat??1),0);state.stock[k]=Math.round(f.stockDays*eat*2);} // 騎兵は5倍で数える
+    else state.stock[k]=stockOfFeat(f);});
   if(!edit&&canStart()){startBattle();return;} // 保存済みの配置でそのまま始める
   log(canStart()?'配置：部隊の位置と向きを決めてください':'このマップには両軍の部隊がそろっていません。マップ編集で部隊を置いてください','sys');render();
 }
@@ -153,7 +156,7 @@ const DEF_F={blue:0,red:3}; // 青は右、赤は左を向く
 function makeUnit(id,side,type,q,r,f,men){
   const men0=Math.max(1,Math.round(men||cfg.units[type].men));
   return {id,no:0,side,type,q,r,f:((f|0)%6+6)%6,men0,hp:men0*cfg.units[type].hp,mp:0,attacked:false,dis:0,
-    food:men0*cfg.foodDays*2,cargo:type==='supply'?men0*cfg.supplyCap:0,order:null,supplied:true,starving:false, // 兵糧（1人1食分＝1）、輜重の積み荷、往復の命令
+    food:men0*(cfg.units[type].eat??1)*cfg.foodDays*2,cargo:type==='supply'?men0*cfg.supplyCap:0,order:null,supplied:true,starving:false, // 兵糧（1人1食分＝1）、輜重の積み荷、往復の命令
     morale:100,hidden:false,pending:false,sprung:false,mark:null,shotFrom:null,worked:false,exposed:false}; // worked＝工事で手番を終えた（次の手番まで無防備）
   // hidden＝隠蔽中、pending＝手番の終わりに隠れる、sprung＝この隠蔽での奇襲は済んだ、mark＝敵が最後に見た位置、shotFrom＝矢を受けた方向
 }
@@ -217,8 +220,9 @@ const isNight=()=>state&&state.phase==='battle'&&slotOf()>=2;
 const timeLabel=()=>dayOf()+'日目：'+SLOTS[slotOf()];
 /* ---- 兵糧と補給 ---- */
 const MEALS=2,mealTime=()=>slotOf()===0||slotOf()===2; // 食事は朝と夜の1日2回、1人1食分＝1
-const foodMax=u=>menOf(u)*cfg.foodDays*MEALS,cargoMax=u=>u.men0*cfg.supplyCap,foodDaysMax=()=>cfg.foodDays-1;
-const foodDaysOf=u=>menOf(u)?Math.floor((u.food??0)/menOf(u)+1e-9)/MEALS:0; // 残りの兵糧（日分、半日＝1食刻み）
+const eatOf=u=>menOf(u)*(cfg.units[u.type].eat??1); // 1食で食べる量（騎兵は馬の分で5倍）
+const foodMax=u=>eatOf(u)*cfg.foodDays*MEALS,cargoMax=u=>u.men0*cfg.supplyCap,foodDaysMax=()=>cfg.foodDays-1;
+const foodDaysOf=u=>eatOf(u)?Math.floor((u.food??0)/eatOf(u)+1e-9)/MEALS:0; // 残りの兵糧（日分、半日＝1食刻み）
 const hqReady=side=>{const hq=honjinOf(side);return hq&&!state.taken[side]&&(state.stock[key(hq.q,hq.r)]??Infinity)>0?hq:null;}; // 占領されておらず、蓄えが残っている本陣
 // 手番のはじめ：本陣のそばの輜重は積み込む。積み荷が少ない（supplyReturn 未満）ときの積み込みはその手番を使い、
 // 少し減っただけなら継ぎ足すだけで動ける。そのあと本陣と輜重が周りの部隊へ兵糧を配る
@@ -241,7 +245,7 @@ function supplyTick(side){
 function eatTick(side){
   if(!mealTime())return;
   state.units.filter(u=>u.side===side).forEach(u=>{
-    const eat=menOf(u);
+    const eat=eatOf(u);
     if(u.food>=eat){u.food-=eat;u.starving=false;return;}
     u.food=0;u.starving=true;shiftMorale(u,-cfg.hungerMorale);
     log(uname(u)+'は兵糧が尽きて食事を抜いた（士気−'+cfg.hungerMorale+'、士気'+moraleOf(u)+'）','sys',privOf(u));
@@ -995,8 +999,10 @@ function featLabel(p){
   const f=featOf(p);if(!f)return '';
   const pc=x=>Math.round(x*100)+'%',v=viewer(),stk=state.stock?.[stockKey(p)];
   const stockTxt=s=>s===undefined?'':'、蓄え'+(isFinite(s)?Math.round(s):'無限');
+  // 本陣の蓄えが、今いる全軍の何日分か（1日2食）
+  const armyDays=(s,side)=>{const eat=state.units.filter(u=>u.side===side).reduce((n,u)=>n+eatOf(u),0);return isFinite(s)&&eat>0?'（全軍の'+(Math.floor(s/(eat*MEALS)*10)/10)+'日分）':'';};
   if(f.type==='honjin')return SIDE_NAME[f.side]+'の本陣（'+SIDE_NAME[f.side]+'の防御×'+cfg.honjinDef+'、手番ごとに'+pc(cfg.honjinHeal)+'回復、敵に占領されると全部隊の士気−'+cfg.honjinLossMorale+
-    (v==null||f.side===v||state.units.some(u=>u.side===v&&u.q===p.q&&u.r===p.r)?stockTxt(state.stock?.[key(p.q,p.r)]):'、蓄えは不明')+'）'+(state.taken[f.side]?'【占領されている】':''); // 敵の本陣の蓄えは占領するまで分からない
+    (v==null||f.side===v||state.units.some(u=>u.side===v&&u.q===p.q&&u.r===p.r)?stockTxt(state.stock?.[key(p.q,p.r)])+armyDays(state.stock?.[key(p.q,p.r)],v&&v!==f.side?v:f.side):'、蓄えは不明') /* 占領した敵の本陣は、自軍の何日分か */+'）'+(state.taken[f.side]?'【占領されている】':''); // 敵の本陣の蓄えは占領するまで分からない
   if(STRUCTS.includes(f.type)){
     const t=structType(p),s=struct[key(p.q,p.r)],name=structName(p);if(!t)return '壊れた'+name;
     const eff=fmt(1+(fullDef(p)-1)*ratioOf(p)),hp=s.hp+'／'+maxOf(t);

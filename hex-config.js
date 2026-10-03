@@ -1,10 +1,10 @@
 /* 朧 OBORO：数値の既定値と保存（ゲーム画面と数値調整タブで共有） */
 const DEFAULTS = {
   units:{
-    spear:{name:'槍兵',ch:'槍',hp:10,men:10,atk:10,def:12,mp:4,rmin:1,rmax:1},
-    cav:{name:'騎兵',ch:'騎',hp:9,men:10,atk:13,def:9,mp:6,rmin:1,rmax:1},
-    archer:{name:'弓兵',ch:'弓',hp:7,men:10,atk:9,def:7,mp:4,rmin:1,rmax:3},
-    supply:{name:'輜重',ch:'輜',hp:6,men:10,atk:0,def:5,mp:3,rmin:1,rmax:1} // 輜重：攻撃も反撃もしない。兵糧を運んで配る
+    spear:{name:'槍兵',ch:'槍',hp:10,men:10,atk:10,def:12,mp:4,rmin:1,rmax:1,eat:1},
+    cav:{name:'騎兵',ch:'騎',hp:9,men:10,atk:13,def:9,mp:6,rmin:1,rmax:1,eat:5}, // 騎兵は兵士1＋馬4で、兵糧を5倍食べる
+    archer:{name:'弓兵',ch:'弓',hp:7,men:10,atk:9,def:7,mp:4,rmin:1,rmax:3,eat:1},
+    supply:{name:'輜重',ch:'輜',hp:6,men:10,atk:0,def:5,mp:3,rmin:1,rmax:1,eat:1} // 輜重：攻撃も反撃もしない。兵糧を運んで配る
   },
   base:2, side:1.5, rear:2.0, disorder:0.9, confusion:0.7, counter:0.8, // disorder＝隊列の乱れ（軽い）、confusion＝混乱（重い。反撃もできない）
   obliqueAtk:0.9, obliqueDef:1.1, // 斜め前の敵を攻撃するときの攻撃倍率、斜め前から攻撃されたときの損害倍率
@@ -70,7 +70,7 @@ function deepMerge(t,s){for(const k in s){if(s[k]&&typeof s[k]==='object'&&t[k]&
 function saveCfg(c){try{localStorage.setItem(STORE,JSON.stringify(c));}catch(e){}}
 // 入力値を遊べる範囲に丸める
 function sanitizeCfg(c){
-  TYPES.forEach(t=>{const U=c.units[t];U.men=Math.max(1,Math.round(U.men));U.hp=Math.max(0.1,U.hp);U.mp=Math.max(0,U.mp);U.rmin=Math.max(1,Math.round(U.rmin));U.rmax=Math.max(U.rmin,Math.round(U.rmax));U.def=Math.max(0.1,U.def);});
+  TYPES.forEach(t=>{const U=c.units[t];U.men=Math.max(1,Math.round(U.men));U.hp=Math.max(0.1,U.hp);U.mp=Math.max(0,U.mp);U.rmin=Math.max(1,Math.round(U.rmin));U.rmax=Math.max(U.rmin,Math.round(U.rmax));U.def=Math.max(0.1,U.def);U.eat=Math.max(0,U.eat);});
   TER_TYPES.forEach(t=>{const T=c.terrain[t];T.move=Math.max(0,T.move);T.def=Math.max(0.1,T.def);T.atk=Math.max(0,T.atk);});
   ['moraleRecover','lossMorale','flankMorale','killMorale','allyLostMorale','honjinLossMorale','honjinOccupiedMorale','honjinRetakeMorale'].forEach(k=>{c[k]=Math.max(0,c[k]);});
   c.desertLine=Math.min(100,Math.max(1,c.desertLine));c.desertMax=Math.min(1,Math.max(0,c.desertMax));

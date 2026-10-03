@@ -117,12 +117,25 @@ function save(unitsChanged){
 function editable(){const m=cur();if(m.builtin){setMsg('「'+m.name+'」は組み込みのマップなので編集できません。「＋ 新規」で新しいマップを作ってください');return false;}return true;}
 
 /* ---- 拠点の蓄え ---- */
+// 本陣の蓄えが、その軍の全兵数の何日分にあたるか（1日2食）
+const armyMen=s=>cur().units.filter(u=>u.side===s).reduce((n,u)=>n+(u.men||cfg.units[u.type].men),0);
+const armyEat=s=>cur().units.filter(u=>u.side===s).reduce((n,u)=>n+(u.men||cfg.units[u.type].men)*(cfg.units[u.type].eat??1),0); // 1食で食べる量（騎兵は5倍）
+const daysFor=(stock,eat)=>eat>0?Math.floor(stock/(eat*2)*10)/10:null;
+function showStockDays(){
+  const el=document.getElementById('stockDays');if(!el)return;
+  const s=featBrush.split('-')[1],men=armyMen(s),eat=armyEat(s),v=featStock.trim();
+  el.textContent=v===''?'空欄なので無限':!(Number(v)>=0)?'':men?'＝ '+Math.round(Number(v)*eat*2)+'（'+SIDE_NAME[s]+men+'人、騎兵は馬の分で5倍、1日2食。戦闘の開始時の兵数で決まります）':SIDE_NAME[s]+'の部隊がまだいません（部隊を置くと量が決まります）';
+}
 const featHasStock=()=>['honjin-blue','honjin-red','village','jinchi','fort'].includes(featBrush);
-function applyStock(f){if(!f)return;const v=featStock.trim();if(v===''||!(Number(v)>=0))delete f.stock;else f.stock=Math.round(Number(v));}
+// 本陣は「全軍の何日分」（stockDays）、村・陣地・砦は量（stock）で覚える
+function applyStock(f){if(!f)return;const v=featStock.trim(),ok=v!==''&&Number(v)>=0;delete f.stock;delete f.stockDays;
+  if(!ok)return;if(f.type==='honjin')f.stockDays=Math.round(Number(v)*10)/10;else f.stock=Math.round(Number(v));}
 // 盤に蓄えの量を出す（本陣で書いていなければ「無限」）
 function stockLabels(){
-  let h='';featureAt.forEach((f,k)=>{if(!holdsStock(f))return;const s=f.stock;if(s==null&&f.type!=='honjin')return;const c=cells.get(k);if(!c)return;
-    h+='<text class="men stock" x="'+c.x+'" y="'+(c.y+S*K*0.62).toFixed(1)+'">蓄え'+(s==null?'∞':s)+'</text>';});
+  let h='';featureAt.forEach((f,k)=>{if(!holdsStock(f))return;const s=f.stock;if(s==null&&f.stockDays==null&&f.type!=='honjin')return;const c=cells.get(k);if(!c)return;
+    const txt=f.type==='honjin'&&f.stockDays!=null?f.stockDays+'日分（'+Math.round(f.stockDays*armyEat(f.side)*2)+'）' // 本陣は日分で
+      :s==null?'∞':s+(f.type==='honjin'&&daysFor(s,armyEat(f.side))!=null?'（'+daysFor(s,armyEat(f.side))+'日分）':'');
+    h+='<text class="men stock" x="'+c.x+'" y="'+(c.y+S*K*0.62).toFixed(1)+'">蓄え'+txt+'</text>';});
   return h;
 }
 /* ---- 描画 ---- */
@@ -159,11 +172,14 @@ function drawTool(){
   }else if(mode==='features'){
     const F=[['honjin-blue','青の本陣'],['honjin-red','赤の本陣'],['village','村'],['jinchi','陣地'],['fort','砦（7）'],['fence','柵'],['none','消す']];
     t.innerHTML='<div class="pick">'+F.map(([f,l])=>'<button class="'+(f===featBrush?(f==='honjin-blue'?'b-blue ':f==='honjin-red'?'b-red ':'')+'on':'ghost')+'" data-f="'+f+'">'+l+'</button>').join('')+'</div>'+
-      (featHasStock()?'<div class="row" style="margin-top:.6rem"><label class="chk">蓄え <input type="number" min="0" step="100" id="iStock" value="'+esc(featStock)+'" placeholder="'+(featBrush.startsWith('honjin')?'空欄で無限':'空欄でなし')+'"> 食（1人1食分＝1）</label></div>'+
+      (featHasStock()?(featBrush.startsWith('honjin')
+          ?'<div class="row" style="margin-top:.6rem"><label class="chk">蓄え 全軍の <input type="number" min="0" step="1" id="iStock" value="'+esc(featStock)+'" placeholder="空欄で無限"> 日分</label></div>'
+          :'<div class="row" style="margin-top:.6rem"><label class="chk">蓄え <input type="number" min="0" step="100" id="iStock" value="'+esc(featStock)+'" placeholder="空欄でなし"> 食（1人1食分＝1）</label></div>')+
+        (featBrush.startsWith('honjin')?'<p class="hint" id="stockDays"></p>':'')+
         '<p class="hint">この値で置きます。置いてある'+(featBrush.startsWith('honjin')?'本陣':'同じ拠点')+'をクリックすると、蓄えだけ書き換えます'+(featBrush==='fort'?'（砦は7マスで1つの蓄え）':'')+'。</p>':'')+
       '<p class="hint" style="margin-top:.5rem">本陣は各軍に1つで、置き直すと前の本陣は消えます。敵に占領されるとその軍の士気が大きく下がります。村は隠れられて兵が回復します。陣地（1マス）と砦は中の部隊の防御を上げます。砦は選んだマスを中央に周りの6マスごと置かれ、中央が特に堅くなります（どこか1マスを消すと砦全体が消えます）。柵は騎兵を止めます。柵・陣地・砦は攻撃で壊せます。本陣・村・陣地・砦には兵糧の蓄えを持たせられます。</p>';
     t.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{featBrush=b.dataset.f;drawTool();});
-    const is=document.getElementById('iStock');if(is)is.oninput=()=>{featStock=is.value;};
+    const is=document.getElementById('iStock');if(is){is.oninput=()=>{featStock=is.value;showStockDays();};showStockDays();}
   }else if(mode==='units'){
     const cnt=s=>{const us=cur().units.filter(u=>u.side===s);return us.length+'部隊・'+us.reduce((n,u)=>n+(u.men||cfg.units[u.type].men),0)+'人';};
     t.innerHTML='<div class="pick">'+['blue','red'].map(s=>'<button class="'+(s===side?'b-'+s+' on':'ghost')+'" data-side="'+s+'">'+SIDE_NAME[s]+'</button>').join('')+'<span></span>'+

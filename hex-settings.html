@@ -76,8 +76,8 @@ const setP=(o,p,v)=>{const ks=p.split('.'),last=ks.pop();ks.reduce((x,k)=>x[k],o
 const inp=(p,step)=>'<input type="number" step="'+step+'" data-path="'+p+'" value="'+getP(cfg,p)+'" aria-label="'+p+'">';
 
 function build(){
-  let h='<tr><th></th><th>初期兵数</th><th>HP（1人）</th><th>攻撃</th><th>防御</th><th>移動力</th><th>最小射程</th><th>最大射程</th></tr>';
-  TYPES.forEach(t=>{h+='<tr><th>'+cfg.units[t].name+'</th>'+['men','hp','atk','def','mp','rmin','rmax'].map(f=>'<td>'+inp('units.'+t+'.'+f,1)+'</td>').join('')+'</tr>';});
+  let h='<tr><th></th><th>初期兵数</th><th>HP（1人）</th><th>攻撃</th><th>防御</th><th>移動力</th><th>最小射程</th><th>最大射程</th><th>兵糧（倍）</th></tr>';
+  TYPES.forEach(t=>{h+='<tr><th>'+cfg.units[t].name+'</th>'+['men','hp','atk','def','mp','rmin','rmax','eat'].map(f=>'<td>'+inp('units.'+t+'.'+f,1)+'</td>').join('')+'</tr>';});
   document.getElementById('unitTbl').innerHTML=h;
   // 倍率とコストは内容ごとの表に分ける（どこにも入らない項目は「その他」へ）
   const label=Object.fromEntries(MULT_FIELDS),used=new Set();

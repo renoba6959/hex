@@ -98,6 +98,8 @@ function cleanMap(m){
       if(f.side!=='blue'&&f.side!=='red')return;
       Object.keys(out.features).forEach(x=>{const o=out.features[x];if(o.type==='honjin'&&o.side===f.side)delete out.features[x];}); // 本陣は各軍に1つ
       out.features[k]={type:'honjin',side:f.side};
+      // 本陣の蓄えは「全軍の何日分」で持てる（戦闘の開始時の兵数で量が決まる）
+      if(f.stockDays!=null&&f.stockDays!==''&&Number(f.stockDays)>=0){out.features[k].stockDays=Math.round(Number(f.stockDays)*10)/10;return;}
     }else out.features[k]={type:f.type};
     // 本陣・村・陣地の蓄え（1人1食分＝1）。本陣は書かなければ無限、ほかは書かなければなし
     if((f.type==='honjin'||f.type==='village'||f.type==='jinchi')&&f.stock!=null&&f.stock!==''&&Number(f.stock)>=0)out.features[k].stock=Math.round(Number(f.stock));
