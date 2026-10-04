@@ -162,14 +162,11 @@ function riverPaths(){
   });
   return out;
 }
-// 拠点の仮の記号（本陣＝軍の色の旗、村＝家、焼けた村＝焦げた柱、陣地＝土塁と幟、柵＝杭の並び。砦はタイルで描くので耐久の棒だけ）。hp は柵・砦の耐久の割合、building は工事中（薄く描く）
+// 拠点の仮の記号（本陣はタイルで描く、村＝家、焼けた村＝焦げた柱、陣地＝土塁と幟、柵＝杭の並び。砦はタイルで描くので耐久の棒だけ）。hp は柵・砦の耐久の割合、building は工事中（薄く描く）
 function featureSVG(f,c,hp,building){
   let h='<g class="feat" transform="translate('+c.x.toFixed(1)+','+c.y.toFixed(1)+')"'+(building?' opacity=".45"':'')+'>';
   if(f.type==='honjin'){
-    const col=f.side==='blue'?'var(--blue)':'var(--red)';
-    h+='<ellipse rx="'+(S*0.74).toFixed(1)+'" ry="'+(S*0.74*K).toFixed(1)+'" fill="none" stroke="'+col+'" stroke-width="2.5" stroke-dasharray="6 3"/>'+
-      '<line x1="19" y1="8" x2="19" y2="-30" stroke="#3E2E1C" stroke-width="2"/><rect x="19" y="-30" width="11" height="18" fill="'+col+'" stroke="#1E2922" stroke-width="1"/>'+
-      '<text x="24.5" y="-21" font-size="8" font-weight="800" fill="#fff" text-anchor="middle" dominant-baseline="central" font-family="var(--serif)">本</text>';
+    // 本陣はタイル（軍の色の旗）で描くので、記号はなし
   }else if(f.type==='village'){
     const house=(x,y)=>'<g transform="translate('+x+','+y+')"><path d="M-6,5 L-6,-2 L6,-2 L6,5 Z" fill="#D8B37A" stroke="#4A3824" stroke-width="1"/><path d="M-8,-1 L0,-8 L8,-1 Z" fill="#8E4B32" stroke="#4A3824" stroke-width="1"/></g>';
     h+=house(-21,6)+house(21,6)+house(0,-17);
@@ -203,6 +200,7 @@ function boardSVG(st){
   cells.forEach(c=>{
     let t=tileOf(c);const f=featOf(c);
     if(f&&f.type==='fort'){const s=st&&st.hp[key(c.q,c.r)];if(!st||(s&&s.hp>0))t=fortTile(c,f)||t;} // 壊れた砦のマスは地形のタイルに戻す
+    else if(f&&f.type==='honjin')t='honjin-'+f.side; // 本陣は軍の色の旗が立つ陣のタイル
     h+='<image class="tile" href="tiles/'+t+'.png" x="'+(c.x-TILE.cx*IMG_S).toFixed(1)+'" y="'+(c.y-TILE.cy*IMG_S).toFixed(1)+'" width="'+tw+'" height="'+tw+'"/>';
   });
   h+='</g><g>';
