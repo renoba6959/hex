@@ -112,6 +112,7 @@ function cleanMap(m){
     if(!u||!UNIT_TYPES.includes(u.type)||(u.side!=='blue'&&u.side!=='red'))return;
     const col=u.col|0,row=u.row|0;if(col<0||col>=cols||row<0||row>=rows||out.units.some(x=>x.col===col&&x.row===row))return;
     const o={side:u.side,type:u.type,col,row,f:((u.f|0)%6+6)%6};if(u.men>0)o.men=Math.round(u.men);
+    if(Number.isInteger(u.rank)&&u.rank>=0&&u.rank<=4&&u.rank!==1)o.rank=u.rank; // 練度（0＝新兵〜4＝古強者。書かなければ並）
     out.units.push(o);
   });
   return out;
@@ -162,24 +163,28 @@ function riverPaths(){
   });
   return out;
 }
-// 拠点の仮の記号（本陣はタイルで描く、村＝家、焼けた村＝焦げた柱、陣地＝土塁と幟、柵＝杭の並び。砦はタイルで描くので耐久の棒だけ）。hp は柵・砦の耐久の割合、building は工事中（薄く描く）
+// 拠点の記号（本陣・村・完成した陣地と柵・砦はタイルで描く。焼けた村＝焦げた柱、工事中の陣地＝土塁と幟、工事中の柵＝杭の並び。砦はタイルで描くので耐久の棒だけ）。hp は柵・砦の耐久の割合、building は工事中（薄く描く）
 function featureSVG(f,c,hp,building){
   let h='<g class="feat" transform="translate('+c.x.toFixed(1)+','+c.y.toFixed(1)+')"'+(building?' opacity=".45"':'')+'>';
   if(f.type==='honjin'){
     // 本陣はタイル（軍の色の旗）で描くので、記号はなし
   }else if(f.type==='village'){
-    const house=(x,y)=>'<g transform="translate('+x+','+y+')"><path d="M-6,5 L-6,-2 L6,-2 L6,5 Z" fill="#D8B37A" stroke="#4A3824" stroke-width="1"/><path d="M-8,-1 L0,-8 L8,-1 Z" fill="#8E4B32" stroke="#4A3824" stroke-width="1"/></g>';
-    h+=house(-21,6)+house(21,6)+house(0,-17);
+    // 村はタイルで描く
   }else if(f.type==='ruin'){
     // 焼け跡の村：焦げた柱と灰
     const burnt=(x,y)=>'<g transform="translate('+x+','+y+')"><path d="M-6,5 L-6,0 L-3,-3 L-1,1 L2,-4 L6,0 L6,5 Z" fill="#3B3632" stroke="#1E1A17" stroke-width="1"/></g>';
     h+='<ellipse cx="0" cy="4" rx="'+(S*0.62).toFixed(1)+'" ry="'+(S*0.42*K).toFixed(1)+'" fill="#5A534B" opacity=".45"/>'+burnt(-21,6)+burnt(21,6)+burnt(0,-17);
+  }else if(f.type==='jinchi'&&!building){
+    // 完成した陣地はタイルで描く（ここは耐久の棒だけ）
   }else if(f.type==='jinchi'){
-    // 土を盛った塁と幟
+    // 工事中の陣地：土を盛った塁と幟（うすく描く）
     h+='<path d="M-26,12 Q-26,-2 -12,-4 L12,-4 Q26,-2 26,12 Z" fill="#9C7A4E" stroke="#4A3824" stroke-width="1.1"/><path d="M-20,8 Q0,2 20,8" stroke="#6E5536" stroke-width="1" fill="none"/>'+
       '<line x1="-16" y1="-3" x2="-16" y2="-24" stroke="#3E2E1C" stroke-width="1.5"/><rect x="-16" y="-24" width="7" height="12" fill="#C9B27A" stroke="#3E2E1C" stroke-width=".8"/>'+
       '<line x1="17" y1="-3" x2="17" y2="-24" stroke="#3E2E1C" stroke-width="1.5"/><rect x="17" y="-24" width="7" height="12" fill="#C9B27A" stroke="#3E2E1C" stroke-width=".8"/>';
+  }else if(f.type==='fence'&&!building){
+    // 完成した柵はタイルで描く（ここは耐久の棒だけ）
   }else if(f.type==='fence'){
+    // 工事中の柵：杭の並び（うすく描く）
     h+='<line x1="-25" y1="9" x2="25" y2="9" stroke="#4A3824" stroke-width="2.2"/><line x1="-25" y1="3" x2="25" y2="3" stroke="#4A3824" stroke-width="2.2"/>';
     for(let x=-24;x<=24;x+=6)h+='<path d="M'+(x-1.6)+',13 L'+(x-1.6)+',-3 L'+x+',-6 L'+(x+1.6)+',-3 L'+(x+1.6)+',13 Z" fill="#A67C4A" stroke="#3E2E1C" stroke-width=".8"/>';
   }
@@ -201,6 +206,8 @@ function boardSVG(st){
     let t=tileOf(c);const f=featOf(c);
     if(f&&f.type==='fort'){const s=st&&st.hp[key(c.q,c.r)];if(!st||(s&&s.hp>0))t=fortTile(c,f)||t;} // 壊れた砦のマスは地形のタイルに戻す
     else if(f&&f.type==='honjin')t='honjin-'+f.side; // 本陣は軍の色の旗が立つ陣のタイル
+    else if(f&&f.type==='village')t='village'; // 村（焼けると 'ruin' になり、地形のタイルに戻る）
+    else if(f&&(f.type==='jinchi'||f.type==='fence')){const s=st&&st.hp[key(c.q,c.r)];if(!st||(s&&s.hp>0&&s.done))t=f.type+(f.side?'-'+f.side:'');} // 陣地・柵は完成したらタイル（築いた軍の色。マップに置いたものは中立）
     h+='<image class="tile" href="tiles/'+t+'.png" x="'+(c.x-TILE.cx*IMG_S).toFixed(1)+'" y="'+(c.y-TILE.cy*IMG_S).toFixed(1)+'" width="'+tw+'" height="'+tw+'"/>';
   });
   h+='</g><g>';

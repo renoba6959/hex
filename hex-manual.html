@@ -38,6 +38,7 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
       <li><a href="#win">勝敗</a></li>
       <li><a href="#units">部隊と兵数</a></li>
       <li><a href="#morale">士気</a></li>
+      <li><a href="#rank">練度</a></li>
       <li><a href="#supply">兵糧と補給</a></li>
       <li><a href="#move">向きと移動</a></li>
       <li><a href="#attack">攻撃</a></li>
@@ -89,6 +90,21 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
       <tr><td>本陣を占領される</td><td>全部隊 −<span data-v="honjinLossMorale"></span>、占領中は手番ごとに −<span data-v="honjinOccupiedMorale"></span></td></tr>
       <tr><td>本陣を奪い返す</td><td>全部隊 +<span data-v="honjinRetakeMorale"></span></td></tr>
     </table>
+
+    <h2 id="rank">練度</h2>
+    <p>部隊ごとに練度があり、経験がたまると上がります。盤面では、兵種の記号の右に「新・熟・精・古」の印が出ます（並は印なし）。</p>
+    <table>
+      <tr><th>練度</th><th>必要な経験</th><th>攻撃・防御</th><th>損害での士気の下がり方</th><th>そのほか</th></tr>
+      <tr><td>新兵</td><td>0</td><td>×0.85</td><td>×1.2</td><td></td></tr>
+      <tr><td>並</td><td>100</td><td>×1</td><td>×1</td><td></td></tr>
+      <tr><td>熟練</td><td>250</td><td>×1.1</td><td>×0.85</td><td></td></tr>
+      <tr><td>精鋭</td><td>450</td><td>×1.2</td><td>×0.7</td><td>接敵中の旋回・入れ替えで隊列が乱れない</td></tr>
+      <tr><td>古強者</td><td>700</td><td>×1.3</td><td>×0.6</td><td>同上</td></tr>
+    </table>
+    <ul>
+      <li>経験は、敵兵を倒すとたまります（自分の最初の兵数と同じ数を倒すと100）。敵の部隊を壊滅させると、さらに20。</li>
+      <li>最初の練度はマップ編集で部隊ごとに決められます（決めなければ並）。単発の戦闘で上がった練度は、次の戦闘に持ち越しません。</li>
+    </ul>
 
     <h2 id="supply">兵糧と補給</h2>
     <p>兵糧は「1人1食分＝1」で数えます。食事は朝と夜の1日2回で、その時刻の自軍の手番の終わりに、今いる人数分を食べます。部隊は <span class="v" data-v="foodDays"></span> 日分の兵糧を持ちます。<b>騎兵</b>は兵士1＋馬4として、<span class="v" data-v="units.cav.eat"></span> 倍の兵糧を食べます（持てる量も同じ倍率）。兵が減れば、残りの兵糧は長くもちます。</p>

@@ -58,6 +58,15 @@ const MULT_FIELDS = [
   ['fenceVs.spear','柵・砦の壊しやすさ（槍兵＝基準の比）'],['fenceVs.cav','柵・砦の壊しやすさ（騎兵、槍兵に対する比）'],['fenceVs.archer','柵・砦の壊しやすさ（弓兵、槍兵に対する比）']
 ];
 const TYPES=['spear','cav','archer','supply'];
+// 練度：経験がたまると上がる。mul＝攻撃・防御の倍率、morale＝損害で士気が下がる量の倍率、steady＝接敵中の旋回・入れ替えで隊列が乱れない
+const RANKS=[
+  {name:'新兵',ch:'新',exp:0,  mul:0.85,morale:1.2, steady:false},
+  {name:'並',  ch:'',  exp:100,mul:1,   morale:1,   steady:false},
+  {name:'熟練',ch:'熟',exp:250,mul:1.1, morale:0.85,steady:false},
+  {name:'精鋭',ch:'精',exp:450,mul:1.2, morale:0.7, steady:true},
+  {name:'古強者',ch:'古',exp:700,mul:1.3,morale:0.6, steady:true}
+];
+const rankOfExp=e=>{let i=0;RANKS.forEach((r,k)=>{if(e>=r.exp)i=k;});return i;};
 const TER_NAME={plain:'平地',forest:'森',hill:'丘',river:'川',mountain:'山'},TER_TYPES=['forest','hill','mountain','river'];
 const STORE='hex-facing-cfg-v2';
 const clone=o=>JSON.parse(JSON.stringify(o));
