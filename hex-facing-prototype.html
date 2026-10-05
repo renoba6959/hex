@@ -30,6 +30,7 @@ svg#board{display:block;width:100%;height:auto;min-width:600px;touch-action:mani
 .men{font-family:var(--sans);font-weight:700;font-size:9px;fill:var(--ink);text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:var(--map);stroke-width:3px;pointer-events:none} .mor{fill:#D8A23A} .mor.low{fill:var(--red)}
 .dis{font-family:var(--serif);font-weight:800;font-size:10px;fill:var(--ink);paint-order:stroke;stroke:var(--map);stroke-width:3px}
 .dis.conf{fill:var(--red)}
+.result{list-style:none;margin:.2rem 0 0;padding:0;font-size:.82rem;line-height:1.6}.result li{border-bottom:1px solid var(--line);padding:.35rem 0}.result .rh{display:flex;justify-content:space-between;gap:.5rem}.result .rh span{color:var(--muted)}
 .rank{font-family:var(--serif);font-weight:800;font-size:9px;fill:#7A4A12;paint-order:stroke;stroke:var(--map);stroke-width:3px;pointer-events:none}
 .unit.hid .totsu,.mark .totsu{fill-opacity:.5;stroke-dasharray:3 2}
 .mark{pointer-events:none;opacity:.75}
@@ -82,7 +83,7 @@ const FORM_STORE='hex-facing-formation-v4';
 let formation={byMap:{}};
 try{const o=JSON.parse(localStorage.getItem(FORM_STORE));if(o&&o.byMap&&typeof o.byMap==='object')formation=o;}catch(e){}
 function saveFormation(){
-  formation.byMap[state.mapId]={rev:state.mapRev,units:state.units.map(u=>({side:u.side,type:u.type,q:u.q,r:u.r,f:u.f,men:u.men0,rank:u.rank0}))};
+  formation.byMap[state.mapId]={rev:state.mapRev,units:state.units.map(u=>({side:u.side,type:u.type,q:u.q,r:u.r,f:u.f,men:u.men0,rankA:u.rankA0,rankD:u.rankD0}))};
   try{localStorage.setItem(FORM_STORE,JSON.stringify(formation));}catch(e){}
 }
 
@@ -119,17 +120,17 @@ function newGame(edit){
   const db=loadMaps(),map=findMap(db,db.current);useMap(map); // 戦闘中にマップが編集されても、この戦闘の地形は変わらない
   struct={};featureAt.forEach((f,k)=>{if(STRUCTS.includes(f.type))struct[k]={hp:maxOf(f.type),done:true};}); // マップの柵・陣地・砦は完成済み
   let id=0;const units=[];
-  const add=(side,type,q,r,f,men,rank)=>{
+  const add=(side,type,q,r,f,men,ra,rd)=>{
     if(!TYPES.includes(type)||!SIDE_NAME[side]||!cells.has(key(q,r))||units.some(u=>u.q===q&&u.r===r))return;
-    units.push(makeUnit(id++,side,type,q,r,f,men,rank));
+    units.push(makeUnit(id++,side,type,q,r,f,men,ra,rd));
   };
   // 配置画面で動かした配置があればそれを使う。マップの部隊が編集されたら、マップの初期配置に戻る
   const saved=formation.byMap[map.id];
-  if(saved&&saved.rev===map.rev&&Array.isArray(saved.units))saved.units.forEach(o=>add(o.side,o.type,o.q,o.r,o.f,o.men,o.rank));
-  else (map.units||[]).forEach(o=>{const c=fromCR(o.col,o.row);add(o.side,o.type,c.q,c.r,o.f,o.men,o.rank);});
+  if(saved&&saved.rev===map.rev&&Array.isArray(saved.units))saved.units.forEach(o=>add(o.side,o.type,o.q,o.r,o.f,o.men,o.rankA,o.rankD));
+  else (map.units||[]).forEach(o=>{const c=fromCR(o.col,o.row);add(o.side,o.type,c.q,c.r,o.f,o.men,o.rankA,o.rankD);});
   units.filter(u=>cavBlocked(u.type,u)).forEach(u=>{const c=[...cells.values()].filter(c=>!cavBlocked(u.type,c)&&!units.some(x=>x.q===c.q&&x.r===c.r)).sort((a,b)=>dist(a,u)-dist(b,u))[0];if(c){u.q=c.q;u.r=c.r;}}); // 山に置かれた騎兵は近くの山以外へよける
   renumber(units);
-  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false},stock:{}};
+  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false},stock:{},gone:[],result:null}; // gone＝この戦闘でいなくなった部隊（結果に使う）
   // 本陣・村・陣地・砦の蓄え（1人1食分＝1）。本陣を「全軍の何日分」で決めたマップは、開始時の兵数×2食×日数にする
   featureAt.forEach((f,k)=>{if(!holdsStock(f))return;
     if(f.type==='honjin'&&f.stockDays!=null){const eat=units.filter(u=>u.side===f.side).reduce((n,u)=>n+u.men0*(cfg.units[u.type].eat??1),0);state.stock[k]=Math.round(f.stockDays*eat*2);} // 騎兵は5倍で数える
@@ -154,10 +155,11 @@ function startBattle(){
 }
 /* ---- 配置 ---- */
 const DEF_F={blue:0,red:3}; // 青は右、赤は左を向く
-function makeUnit(id,side,type,q,r,f,men,rank){
-  const men0=Math.max(1,Math.round(men||cfg.units[type].men)),rank0=Number.isInteger(rank)?rank:1;
+function makeUnit(id,side,type,q,r,f,men,ra,rd){
+  const men0=Math.max(1,Math.round(men||cfg.units[type].men)),rankA0=Number.isInteger(ra)?ra:1,rankD0=Number.isInteger(rd)?rd:1;
   return {id,no:0,side,type,q,r,f:((f|0)%6+6)%6,men0,hp:men0*cfg.units[type].hp,mp:0,attacked:false,dis:0,
-    rank0,exp:RANKS[rank0].exp, // 練度（最初の段階と経験）
+    rankA0,rankD0,expA:RANKS[rankA0].exp,expD:RANKS[rankD0].exp, // 練度（攻撃・守備の最初の段階と経験。戦闘中は変わらない）
+    st:{killA:0,killD:0,dead:0,wounded:0,deserted:0}, // この戦闘の記録：攻めて倒した・守って倒した敵兵、戦死・負傷・脱走
     food:men0*(cfg.units[type].eat??1)*cfg.foodDays*2,cargo:type==='supply'?men0*cfg.supplyCap:0,order:null,supplied:true,starving:false, // 兵糧（1人1食分＝1）、輜重の積み荷、往復の命令
     morale:100,hidden:false,pending:false,sprung:false,mark:null,shotFrom:null,worked:false,exposed:false}; // worked＝工事で手番を終えた（次の手番まで無防備）
   // hidden＝隠蔽中、pending＝手番の終わりに隠れる、sprung＝この隠蔽での奇襲は済んだ、mark＝敵が最後に見た位置、shotFrom＝矢を受けた方向
@@ -364,20 +366,19 @@ async function beginSide(side){
   if(!state.winner&&isAI(side)&&state.side===side)setTimeout(runAI,350);
 }
 /* ---- 練度 ---- */
-const rankOf=u=>rankOfExp(u.exp??100),rankInfo=u=>RANKS[rankOf(u)];
-// 経験を足す。段階が上がったら記録に残す
-function gainExp(u,n){
-  if(!state.units.includes(u)||!(n>0))return;
-  const before=rankOf(u);u.exp=(u.exp??100)+n;const after=rankOf(u);
-  if(after>before)log(uname(u)+'の練度が「'+RANKS[after].name+'」に上がった','kill',u.side);
+const RA=u=>RANKS[rankOfExp(u.expA??100)],RD=u=>RANKS[rankOfExp(u.expD??100)]; // 攻撃の練度・守備の練度
+// 損害の記録：失った兵は負傷と戦死に分け、倒した側には「攻めて」か「守って」倒した数として数える（経験は戦闘の終わりにまとめて入る）
+function casualty(t,lost,by,mode){
+  if(!(lost>0))return;
+  const st=t.st||(t.st={killA:0,killD:0,dead:0,wounded:0,deserted:0});
+  st.wounded+=lost*cfg.woundRate;st.dead+=lost*(1-cfg.woundRate);
+  if(by){const b=by.st||(by.st={killA:0,killD:0,dead:0,wounded:0,deserted:0});b[mode==='def'?'killD':'killA']+=lost;}
 }
-// 敵兵を倒したときの経験：自分の最初の兵数に対して倒した割合×100、壊滅させたら＋20
-const expForKills=(a,killed)=>killed/Math.max(1,a.men0)*100;
 /* ---- 士気 ---- */
 const moraleOf=u=>Math.round(u.morale??100);
 function shiftMorale(u,d){u.morale=Math.min(100,Math.max(0,(u.morale??100)+d));}
 // 損害を受けたときの動揺。heavy＝側面・背後・奇襲など
-function shaken(u,lost,heavy){if(!state.units.includes(u))return;shiftMorale(u,-(lost/u.men0*100*cfg.lossMorale+(heavy?cfg.flankMorale:0))*rankInfo(u).morale);} // 練度が高いほど動じにくい
+function shaken(u,lost,heavy){if(!state.units.includes(u))return;shiftMorale(u,-(lost/u.men0*100*cfg.lossMorale+(heavy?cfg.flankMorale:0))*RD(u).morale);} // 守備の練度が高いほど動じにくい
 // 手番のはじめ：本陣を占領されている間は下がり、敵と接していなければ回復し、士気が低いと脱走が出る
 function moraleTick(side){
   const us=state.units.filter(u=>u.side===side);
@@ -386,8 +387,8 @@ function moraleTick(side){
     // 脱走は今の士気で決まり、そのあとで回復する
     const m=u.morale??100,men=menOf(u),lost=m<cfg.desertLine?Math.round(men*(cfg.desertLine-m)/cfg.desertLine*cfg.desertMax):0;
     if(lost>=1){
-      u.hp-=lost*cfg.units[u.type].hp;
-      if(menOf(u)<=0){state.units=state.units.filter(x=>x!==u);log(uname(u)+'は士気が尽き、残る兵も逃げ散った','kill',privOf(u));return;}
+      u.hp-=lost*cfg.units[u.type].hp;(u.st||(u.st={killA:0,killD:0,dead:0,wounded:0,deserted:0})).deserted+=lost;
+      if(menOf(u)<=0){state.units=state.units.filter(x=>x!==u);state.gone.push(u);log(uname(u)+'は士気が尽き、残る兵も逃げ散った','kill',privOf(u));return;}
       log(uname(u)+'から'+lost+'人が脱走（士気'+moraleOf(u)+'、残り'+menOf(u)+'人）','sys',privOf(u));
     }
     if(u.supplied&&!inContact(u))shiftMorale(u,cfg.moraleRecover); // 補給が届き、敵と接していなければ回復
@@ -504,7 +505,7 @@ function computeAttack(a,t,amb){
   // 拠点の防御。柵・陣地・砦は耐久の割合だけ効く（例：耐久100/500なら、上がり分の20%）
   const ft=featOf(t),st=structType(t);
   const fd=+(st?1+(fullDef(t)-1)*ratioOf(t):ft?.type==='village'?cfg.villageDef:ft?.type==='honjin'&&ft.side===t.side&&!state.taken[t.side]?cfg.honjinDef:1).toFixed(2);
-  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*rankInfo(a).mul*oa*nr*dm*mx*ad*tam*am/(D.def*rankInfo(t).mul*dd*sf*tdm*fd))); // ランチェスター：損害は攻撃側の兵数に比例
+  const dmg=Math.max(1,Math.round(cfg.base*menOf(a)*A.atk*RA(a).mul*oa*nr*dm*mx*ad*tam*am/(D.def*RD(t).mul*dd*sf*tdm*fd))); // ランチェスター：損害は攻撃側の兵数に比例
   const notes=[cat+(dm!==1?' ×'+dm:'')];
   if(amb)notes.unshift((a.noticed?'気取られた奇襲 ×':'奇襲 ×')+am);
   if(nr!==1)notes.unshift('夜襲 ×'+nr);
@@ -515,8 +516,8 @@ function computeAttack(a,t,amb){
   if(tam!==1)notes.push(TER_NAME[ta]+'から攻撃 ×'+ +tam.toFixed(2));
   if(tdm!==1)notes.push(TER_NAME[td]+'の防御 ÷'+tdm);
   if(fd!==1)notes.push((st?structName(t):{village:'村',honjin:'本陣'}[ft.type])+'の防御 ÷'+fd);
-  if(rankInfo(a).mul!==1)notes.push('攻撃側の練度「'+rankInfo(a).name+'」 ×'+rankInfo(a).mul);
-  if(rankInfo(t).mul!==1)notes.push('防御側の練度「'+rankInfo(t).name+'」 ÷'+rankInfo(t).mul);
+  if(RA(a).mul!==1)notes.push('攻撃の練度「'+RA(a).name+'」 ×'+RA(a).mul);
+  if(RD(t).mul!==1)notes.push('相手の守備の練度「'+RD(t).name+'」 ÷'+RD(t).mul);
   if(a.dis)notes.push('攻撃側'+disName(a)+' ×'+disMul(a));
   if(t.dis)notes.push('防御側'+disName(t)+' ÷'+disMul(t));
   return {dmg,dm,cat,notes};
@@ -535,7 +536,7 @@ function computeCounter(a,t,hitDmg){
 const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uname=u=>SIDE_NAME[u.side]+cfg.units[u.type].name+u.no;
 function log(text,cls='',only=null){state.log.push({text,cls,only});} // only＝その軍にだけ見える記録
-function pushHistory(){state.history.push(JSON.stringify({units:state.units,struct,logLen:state.log.length,winner:state.winner,taken:state.taken}));}
+function pushHistory(){state.history.push(JSON.stringify({units:state.units,struct,logLen:state.log.length,winner:state.winner,taken:state.taken,gone:state.gone}));}
 
 /* ---- actions ---- */
 function tryMove(u,d){
@@ -599,7 +600,7 @@ function doSwap(a,b){
   const {ca,cb}=swapCosts(a,b),[q,r]=[a.q,a.r];
   a.q=b.q;a.r=b.r;b.q=q;b.r=r;a.mp-=ca;b.mp-=cb;state.swap=null;
   log(uname(a)+'と'+uname(b)+'が入れ替わった','sys',privOf(a));
-  if(engaged(a)||engaged(b)){const sh=[a,b].filter(u=>!rankInfo(u).steady);sh.forEach(u=>setDis(u,1));if(sh.length)log('　敵と接しながらの入れ替えで、'+sh.map(uname).join('と')+'の隊列が乱れた（攻防×'+cfg.disorder+'）','sys',privOf(a));}
+  if(engaged(a)||engaged(b)){const sh=[a,b].filter(u=>!RD(u).steady);sh.forEach(u=>setDis(u,1));if(sh.length)log('　敵と接しながらの入れ替えで、'+sh.map(uname).join('と')+'の隊列が乱れた（攻防×'+cfg.disorder+'）','sys',privOf(a));}
   [a,b].forEach(u=>{if(inZoc(u.q,u.r,u.side))u.mp=0;});
   render();
 }
@@ -646,7 +647,7 @@ function attackStruct(a,p){
   const g=unitAt(p.q,p.r);
   if(g&&g.side!==a.side&&!g.hidden&&!g.worked){
     const c=computeCounter(a,g,0);
-    if(c){const am=menOf(a);a.hp-=c.dmg;shaken(a,am-menOf(a),false);log('　反撃 '+uname(g)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');if(a.hp<=0)removeUnitDead(a,g);checkWinner();}
+    if(c){const am=menOf(a);a.hp-=c.dmg;shaken(a,am-menOf(a),false);casualty(a,am-menOf(a),g,'def');log('　反撃 '+uname(g)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');if(a.hp<=0)removeUnitDead(a,g);checkWinner();}
   }
   render();
 }
@@ -680,16 +681,29 @@ function work(u,type){
 }
 function removeUnitDead(u,by){
   state.units=state.units.filter(x=>x!==u);log(uname(u)+'が壊滅','kill');
-  if(by&&state.units.includes(by)){shiftMorale(by,cfg.killMorale);gainExp(by,20);}
+  if(by&&state.units.includes(by))shiftMorale(by,cfg.killMorale);
+  state.gone.push(u);
   state.units.forEach(x=>{if(x.side===u.side&&dist(x,u)<=2)shiftMorale(x,-cfg.allyLostMorale);});
 }
-function checkWinner(){['blue','red'].forEach(s=>{if(!state.winner&&!state.units.some(u=>u.side===s)){state.winner=s==='blue'?'red':'blue';log(SIDE_NAME[state.winner]+'の勝利','kill');}});}
+/* ---- 戦闘の終わり：経験と負傷兵の復帰をまとめる（単発の戦闘では表示だけ。キャンペーンで引き継ぐ） ---- */
+function finishBattle(){
+  const all=[...state.units,...state.gone.filter(u=>!state.units.includes(u))];
+  state.result=all.map(u=>{
+    const st=u.st||{killA:0,killD:0,dead:0,wounded:0,deserted:0},win=u.side===state.winner,alive=state.units.includes(u);
+    const recovered=Math.round(st.wounded*(win?cfg.recoverWin:cfg.recoverLose)),bonus=alive?(win?cfg.expWin:cfg.expLose):0;
+    const gA=alive?st.killA/u.men0*100+bonus:0,gD=alive?st.killD/u.men0*100+bonus:0;
+    return {id:u.id,side:u.side,name:uname(u),alive,killA:Math.round(st.killA),killD:Math.round(st.killD),dead:Math.round(st.dead),wounded:Math.round(st.wounded),recovered,deserted:Math.round(st.deserted),
+      menAfter:alive?menOf(u)+recovered:0,gainA:Math.round(gA),gainD:Math.round(gD),
+      rankA:[rankOfExp(u.expA),rankOfExp(u.expA+gA)],rankD:[rankOfExp(u.expD),rankOfExp(u.expD+gD)]};
+  });
+}
+function checkWinner(){['blue','red'].forEach(s=>{if(!state.winner&&!state.units.some(u=>u.side===s)){state.winner=s==='blue'?'red':'blue';log(SIDE_NAME[state.winner]+'の勝利','kill');finishBattle();}});}
 // 隠れた部隊からの攻撃。反撃は受けない。奇襲なら倍率がかかり、相手は混乱する。
 // 弓兵が2マス以上離れて射た場合は隠れたままで、相手には矢の来た方向だけが分かる
 function hiddenStrike(a,t,amb){
   const res=computeAttack(a,t,amb),tm=menOf(t);
   t.hp-=res.dmg;if(amb)setDis(t,a.noticed?1:2);spillStruct(a,t); // 気取られていた相手は身構えていたので、混乱までは至らない
-  const lost=tm-menOf(t);shaken(t,lost,true);gainExp(a,expForKills(a,lost));
+  const lost=tm-menOf(t);shaken(t,lost,true);casualty(t,lost,a,'atk');
   const rest='残り'+Math.max(0,menOf(t))+'人',fx=amb?(a.noticed?'（反撃なし・隊列の乱れ）':'（反撃なし・混乱）'):'（反撃なし）';
   if(a.type==='archer'&&dist(a,t)>=2){
     a.sprung=true;t.shotFrom=dirTo(t,a);
@@ -727,7 +741,7 @@ function tryTurn(u,delta){
   pushHistory();
   u.f=(u.f+delta+6)%6;u.mp-=cost;
   noticeCheck(u);
-  if(contact&&!u.dis&&!rankInfo(u).steady){setDis(u,1);log(uname(u)+'が接触中に'+(Math.abs(delta)===3?'回れ右':'旋回')+'、隊列が乱れた（攻防×'+cfg.disorder+'）','sys',privOf(u));}
+  if(contact&&!u.dis&&!RD(u).steady){setDis(u,1);log(uname(u)+'が接触中に'+(Math.abs(delta)===3?'回れ右':'旋回')+'、隊列が乱れた（攻防×'+cfg.disorder+'）','sys',privOf(u));}
   render();
 }
 function doAttack(a,t){
@@ -737,12 +751,12 @@ function doAttack(a,t){
   const raid=nightRaid(a,t,false),res=computeAttack(a,t);
   const tm=menOf(t),wk=t.worked;t.hp-=res.dmg;a.attacked=true;a.mp=0;a.exposed=true;if(wk)setDis(t,2);else if(raid)setDis(t,1); // 工事中を襲われると混乱、夜襲を受けると乱れる
   log(uname(a)+' → '+uname(t)+'：'+res.notes.join('、')+'、'+(tm-menOf(t))+'人減、残り'+menOf(t)+'人'+(wk?'（反撃なし・混乱）':''));
-  spillStruct(a,t);shaken(t,tm-menOf(t),wk||res.cat==='斜め後ろ'||res.cat==='真後ろ');gainExp(a,expForKills(a,tm-menOf(t)));
+  spillStruct(a,t);shaken(t,tm-menOf(t),wk||res.cat==='斜め後ろ'||res.cat==='真後ろ');casualty(t,tm-menOf(t),a,'atk');
   if(t.hp<=0)removeUnitDead(t,a);
   else{
     const c=t.worked?null:computeCounter(a,t,0); // 工事中の部隊は反撃できない
     if(c){
-      const am=menOf(a);a.hp-=c.dmg;shaken(a,am-menOf(a),false);gainExp(t,expForKills(t,am-menOf(a)));
+      const am=menOf(a);a.hp-=c.dmg;shaken(a,am-menOf(a),false);casualty(a,am-menOf(a),t,'def');
       log('　反撃 '+uname(t)+' → '+uname(a)+'：'+c.notes.join('、')+'、×'+cfg.counter+'、'+(am-menOf(a))+'人減、残り'+menOf(a)+'人');
       if(a.hp<=0)removeUnitDead(a,t);
     }
@@ -940,7 +954,7 @@ async function runAI(){
 function undo(){
   if(busy||state.prompt)return;
   const s=state.history.pop();if(!s)return;
-  const o=JSON.parse(s);state.units=o.units;struct=o.struct||{};state.log.length=o.logLen;state.winner=o.winner;state.taken=o.taken||{blue:false,red:false};
+  const o=JSON.parse(s);state.units=o.units;struct=o.struct||{};state.log.length=o.logLen;state.winner=o.winner;if(!o.winner)state.result=null;state.taken=o.taken||{blue:false,red:false};state.gone=o.gone||[];
   featureAt.forEach((f,k)=>{if(f.built&&!(k in struct))featureAt.delete(k);}); // 取り消した工事
   if(state.selected!=null&&!byId(state.selected))state.selected=null;render();
 }
@@ -1008,7 +1022,8 @@ function render(){
     h+='<text class="ulabel" x="0" y="0">'+U.ch+'</text>';
     h+='<text class="men" y="18">'+menOf(u)+'</text>'; // 兵数
     h+='<rect class="hpbg" x="-14" y="24" width="28" height="2"/><rect class="mor'+(moraleOf(u)<cfg.desertLine?' low':'')+'" x="-14" y="24" height="2" width="'+(28*moraleOf(u)/100).toFixed(1)+'"/>'; // 士気
-    if(rankInfo(u).ch)h+='<text class="rank" x="14" y="5">'+rankInfo(u).ch+'</text>'; // 練度（並は印なし）
+    {const a=rankOfExp(u.expA),d=rankOfExp(u.expD),hi=Math.max(a,d),lo=Math.min(a,d),ch=a===d?RANKS[a].ch:(hi===1&&lo===0?'新':(a>d?'攻':'守')+RANKS[hi].ch);
+      if(ch)h+='<text class="rank" x="14" y="5">'+ch+'</text>';} // 練度（並は印なし。攻撃と守備が違えば高いほうに「攻」「守」を添える）
     if(u.dis)h+='<text class="dis'+(u.dis===2?' conf':'')+'" x="14" y="-12">'+(u.dis===2?'混':'乱')+'</text>';
     if(u.hidden||u.pending)h+='<text class="badge'+(u.pending?' pend':'')+'" x="-20" y="-12">伏</text>';
     if((u.side===v||v==null)&&(u.starving||foodDaysOf(u)<=1))h+='<text class="badge food'+(u.starving?' out':'')+'" x="-20" y="4">'+(u.starving?'飢':'糧')+'</text>'; // 兵糧が残り少ない・尽きた
@@ -1096,6 +1111,14 @@ function renderPanel(sel,mine,v){
     renderLog(v);return;
   }
   if(state.winner){
+    const res=state.result||[],rk=(p)=>p[0]===p[1]?RANKS[p[0]].name:RANKS[p[0]].name+'→<b>'+RANKS[p[1]].name+'</b>';
+    // 部隊ごとに：戦後の兵数、倒した敵（攻めて／守って）、失った兵（戦死・負傷と復帰・脱走）、経験と練度
+    const table=s=>'<ul class="result">'+res.filter(r=>r.side===s).map(r=>'<li><div class="rh"><b>'+esc(r.name)+'</b><span>'+(r.alive?'戦後 '+r.menAfter+'人':'壊滅')+'</span></div>'+
+      '<div>倒した敵　攻 '+r.killA+'・守 '+r.killD+'</div>'+
+      '<div>失った兵　戦死 '+r.dead+'・負傷 '+r.wounded+'（'+r.recovered+'人復帰）'+(r.deserted?'・脱走 '+r.deserted:'')+'</div>'+
+      (r.alive?'<div>経験　攻 +'+r.gainA+'・守 +'+r.gainD+'</div><div>練度　攻 '+rk(r.rankA)+'・守 '+rk(r.rankD)+'</div>':'')+'</li>').join('')+'</ul>';
+    ub.innerHTML='<div class="uname">戦闘の結果</div><p class="hint" style="margin-top:.2rem">負傷兵は、勝てば'+Math.round(cfg.recoverWin*100)+'%、負ければ'+Math.round(cfg.recoverLose*100)+'%が戦後に復帰します。経験と練度は、キャンペーンで次の戦いに引き継がれます（単発の戦闘では表示だけ）。</p>'+
+      '<h3 style="margin:.6rem 0 .2rem">青軍</h3>'+table('blue')+'<h3 style="margin:.6rem 0 .2rem">赤軍</h3>'+table('red');
     tb.innerHTML='<div class="turn side-'+state.winner+'">'+SIDE_NAME[state.winner]+'の勝利</div>'+(aiRed&&state.aiStyle?'<p class="hint" style="margin-top:.2rem">赤軍の作戦：'+(state.aiSecret&&!state.winner?'？（決着まで伏せる）':AI_STYLES[state.aiStyle])+'</p>':'')+'<div class="row"><button id="bNew">もう一度</button><button class="ghost" id="bUndo"'+(state.history.length?'':' disabled')+'>取り消し</button><button class="ghost" id="bEdit">配置からやり直す</button><button class="ghost" id="bCfg">数値調整</button></div>';
   }else{
     tb.innerHTML='<div class="turn side-'+state.side+'">'+timeLabel()+'　'+SIDE_NAME[state.side]+'の手番</div>'+(isNight()?'<p class="hint" style="margin-top:.2rem">夜：視界は前方'+cfg.visFrontNight+'マス・後方'+cfg.visRearNight+'マス</p>':'')+
@@ -1115,7 +1138,7 @@ function renderPanel(sel,mine,v){
     document.getElementById('bChS').onclick=go(()=>attackStruct(sel,ch));
     document.getElementById('bChX').onclick=go(render);
   }
-  else if(!sel){ub.innerHTML='<p class="hint">部隊を選んでください。</p>';}
+  else if(!sel){if(!state.winner)ub.innerHTML='<p class="hint">部隊を選んでください。</p>';} // 決着したら戦闘の結果を出したまま
   else{
     const U=cfg.units[sel.type],contact=engaged(sel),tc=turnCostOf(sel,1,contact),ac=turnCostOf(sel,3,contact);
     const canT=mine&&sel.mp>=tc;
@@ -1124,7 +1147,8 @@ function renderPanel(sel,mine,v){
     ub.innerHTML='<div class="uname">'+uname(sel)+'</div><dl>'+
       '<dt>兵数</dt><dd>'+menOf(sel)+' / '+sel.men0+'人</dd>'+
       '<dt>士気</dt><dd>'+moraleOf(sel)+(moraleOf(sel)<cfg.desertLine?'（脱走が出ている）':'')+'</dd>'+
-      '<dt>練度</dt><dd>'+rankInfo(sel).name+'（経験'+Math.round(sel.exp??100)+(rankOf(sel)<4?'、次は'+RANKS[rankOf(sel)+1].exp:'')+'）</dd>'+
+      '<dt>練度</dt><dd>攻 '+RA(sel).name+'（'+Math.round(sel.expA)+'）／守 '+RD(sel).name+'（'+Math.round(sel.expD)+'）</dd>'+
+      (state.phase==='battle'&&(sel.side===v||v==null)&&sel.st?'<dt>この戦闘</dt><dd>倒した敵 攻'+Math.round(sel.st.killA)+'・守'+Math.round(sel.st.killD)+'、戦死'+Math.round(sel.st.dead)+'・負傷'+Math.round(sel.st.wounded)+(sel.st.deserted?'・脱走'+Math.round(sel.st.deserted):'')+'</dd>':'')+
       (sel.side===v||v==null?'<dt>兵糧</dt><dd>'+(sel.starving?'尽きている（食事のたびに士気−'+cfg.hungerMorale+'）':'あと'+foodDaysOf(sel)+'日分')+'（'+Math.round(sel.food)+'）、補給'+(sel.supplied?'が届いている':'が届いていない')+'</dd>'+
         (sel.type==='supply'?'<dt>積み荷</dt><dd>'+Math.round(sel.cargo)+' / '+cargoMax(sel)+'（'+cfg.supplyRange+'マス以内に配る）</dd>'+
           '<dt>往復</dt><dd>'+(!sel.order?'なし':(sel.order.unit!=null?(byId(sel.order.unit)?uname(byId(sel.order.unit)):'？'):'マス')+'へ'+(sel.order.phase==='back'?'（本陣へ戻る途中）':''))+'</dd>':''):'')+

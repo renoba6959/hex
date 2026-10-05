@@ -154,7 +154,8 @@ function drawUnits(){
     if(k===selKey)h+='<ellipse class="sel-ring" rx="'+(S*0.8)+'" ry="'+(S*0.8*K).toFixed(1)+'"/>';
     h+='<g transform="rotate('+(SANG[u.f]+90).toFixed(1)+')"><path class="totsu" d="'+TOTSU+'"/></g><text class="ulabel">'+U.ch+'</text>';
     h+='<text class="men" y="22">'+(u.men||U.men)+'人</text>';
-    if(RANKS[u.rank??1].ch)h+='<text class="men" x="15" y="2">'+RANKS[u.rank??1].ch+'</text>'; // 練度（並は印なし）
+    {const a=u.rankA??u.rank??1,d=u.rankD??u.rank??1,hi=Math.max(a,d),ch=a===d?RANKS[a].ch:(hi===1?'新':(a>d?'攻':'守')+RANKS[hi].ch);
+      if(ch)h+='<text class="men" x="15" y="2">'+ch+'</text>';} // 練度（並は印なし）
     h+='</g>';
   });
   document.getElementById('units').innerHTML=h;
@@ -203,13 +204,17 @@ function drawUnitBox(){
   const U=cfg.units[u.type];
   box.innerHTML='<h2>'+SIDE_NAME[u.side]+U.name+'</h2>'+
     '<div class="row"><label class="chk">兵数 <input type="number" min="'+MEN_UNIT+'" step="'+MEN_UNIT+'" id="iMen" value="'+(u.men||U.men)+'"> 人</label></div>'+
-    '<div class="row"><label class="chk">練度 <select id="selRank">'+RANKS.map((r,i)=>'<option value="'+i+'"'+((u.rank??1)===i?' selected':'')+'>'+r.name+'</option>').join('')+'</select></label></div>'+
+    '<div class="row"><label class="chk">練度　攻 <select id="selRankA">'+RANKS.map((r,i)=>'<option value="'+i+'"'+((u.rankA??u.rank??1)===i?' selected':'')+'>'+r.name+'</option>').join('')+'</select></label>'+
+      '<label class="chk">守 <select id="selRankD">'+RANKS.map((r,i)=>'<option value="'+i+'"'+((u.rankD??u.rank??1)===i?' selected':'')+'>'+r.name+'</option>').join('')+'</select></label></div>'+
     '<div class="row"><button class="ghost" id="bRotL">↺ 左へ</button><button class="ghost" id="bRotR">↻ 右へ</button><button class="ghost" id="bDelU">削除</button></div>';
   const im=document.getElementById('iMen');
   // 兵数は100人単位（入力された値は近い100の倍数にそろえる）
   im.onchange=()=>{if(!editable())return;const v=parseFloat(im.value);if(v>0){u.men=Math.max(MEN_UNIT,Math.round(v/MEN_UNIT)*MEN_UNIT);im.value=u.men;save(true);drawUnits();drawTool();}else im.value=u.men||U.men;};
   im.onkeydown=e=>{if(e.key==='Enter')im.blur();};
-  document.getElementById('selRank').onchange=e=>{if(!editable())return;const v=+e.target.value;if(v===1)delete u.rank;else u.rank=v;save(true);drawUnits();};
+  // 練度は攻撃と守備を別々に（並は書かない）
+  const setRank=(k,v)=>{if(!editable())return;if(u.rank!=null){u.rankA=u.rankA??u.rank;u.rankD=u.rankD??u.rank;delete u.rank;}if(v===1)delete u[k];else u[k]=v;save(true);drawUnits();};
+  document.getElementById('selRankA').onchange=e=>setRank('rankA',+e.target.value);
+  document.getElementById('selRankD').onchange=e=>setRank('rankD',+e.target.value);
   document.getElementById('bRotL').onclick=()=>rotate(-1);
   document.getElementById('bRotR').onclick=()=>rotate(1);
   document.getElementById('bDelU').onclick=removeSel;

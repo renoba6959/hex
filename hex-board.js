@@ -112,7 +112,9 @@ function cleanMap(m){
     if(!u||!UNIT_TYPES.includes(u.type)||(u.side!=='blue'&&u.side!=='red'))return;
     const col=u.col|0,row=u.row|0;if(col<0||col>=cols||row<0||row>=rows||out.units.some(x=>x.col===col&&x.row===row))return;
     const o={side:u.side,type:u.type,col,row,f:((u.f|0)%6+6)%6};if(u.men>0)o.men=Math.round(u.men);
-    if(Number.isInteger(u.rank)&&u.rank>=0&&u.rank<=4&&u.rank!==1)o.rank=u.rank; // 練度（0＝新兵〜4＝古強者。書かなければ並）
+    // 練度（攻撃・守備。0＝新兵〜4＝古強者。書かなければ並）。以前の rank は両方に
+    const rk=v=>Number.isInteger(v)&&v>=0&&v<=4?v:null,ra=rk(u.rankA)??rk(u.rank),rd=rk(u.rankD)??rk(u.rank);
+    if(ra!=null&&ra!==1)o.rankA=ra;if(rd!=null&&rd!==1)o.rankD=rd;
     out.units.push(o);
   });
   return out;
