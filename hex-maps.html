@@ -154,8 +154,6 @@ function drawUnits(){
     if(k===selKey)h+='<ellipse class="sel-ring" rx="'+(S*0.8)+'" ry="'+(S*0.8*K).toFixed(1)+'"/>';
     h+='<g transform="rotate('+(SANG[u.f]+90).toFixed(1)+')"><path class="totsu" d="'+TOTSU+'"/></g><text class="ulabel">'+U.ch+'</text>';
     h+='<text class="men" y="22">'+(u.men||U.men)+'人</text>';
-    {const a=u.rankA??u.rank??1,d=u.rankD??u.rank??1,hi=Math.max(a,d),ch=a===d?RANKS[a].ch:(hi===1?'新':(a>d?'攻':'守')+RANKS[hi].ch);
-      if(ch)h+='<text class="men" x="15" y="2">'+ch+'</text>';} // 練度（並は印なし）
     h+='</g>';
   });
   document.getElementById('units').innerHTML=h;
@@ -204,8 +202,8 @@ function drawUnitBox(){
   const U=cfg.units[u.type];
   box.innerHTML='<h2>'+SIDE_NAME[u.side]+U.name+'</h2>'+
     '<div class="row"><label class="chk">兵数 <input type="number" min="'+MEN_UNIT+'" step="'+MEN_UNIT+'" id="iMen" value="'+(u.men||U.men)+'"> 人</label></div>'+
-    '<div class="row"><label class="chk">練度　攻 <select id="selRankA">'+RANKS.map((r,i)=>'<option value="'+i+'"'+((u.rankA??u.rank??1)===i?' selected':'')+'>'+r.name+'</option>').join('')+'</select></label>'+
-      '<label class="chk">守 <select id="selRankD">'+RANKS.map((r,i)=>'<option value="'+i+'"'+((u.rankD??u.rank??1)===i?' selected':'')+'>'+r.name+'</option>').join('')+'</select></label></div>'+
+    '<div class="row"><label class="chk">練度　攻撃 <select id="selRankA">'+RANKS.map((r,i)=>'<option value="'+i+'"'+((u.rankA??u.rank??1)===i?' selected':'')+'>'+starsText(i)+'</option>').join('')+'</select></label>'+
+      '<label class="chk">守備 <select id="selRankD">'+RANKS.map((r,i)=>'<option value="'+i+'"'+((u.rankD??u.rank??1)===i?' selected':'')+'>'+starsText(i)+'</option>').join('')+'</select></label></div>'+
     '<div class="row"><button class="ghost" id="bRotL">↺ 左へ</button><button class="ghost" id="bRotR">↻ 右へ</button><button class="ghost" id="bDelU">削除</button></div>';
   const im=document.getElementById('iMen');
   // 兵数は100人単位（入力された値は近い100の倍数にそろえる）

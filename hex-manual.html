@@ -92,25 +92,26 @@ kbd{font-family:var(--sans);font-size:.82rem;font-weight:700;border:1px solid va
     </table>
 
     <h2 id="rank">練度</h2>
-    <p>部隊ごとに<b>攻撃の練度</b>と<b>守備の練度</b>があり、それぞれ経験がたまると上がります。盤面では兵種の記号の右に印が出ます（並は印なし。攻撃と守備が違うときは、高いほうに「攻」「守」を添えます）。</p>
+    <p>部隊ごとに<b>攻撃の練度</b>と<b>守備の練度</b>があり、それぞれ経験がたまると上がります（★1〜★5）。部隊の情報欄に、上に2つ・下に3つの星で表示します。</p>
     <table>
       <tr><th>練度</th><th>必要な経験</th><th>攻撃の練度：攻撃</th><th>守備の練度：防御</th><th>守備の練度：損害での士気の下がり方</th></tr>
-      <tr><td>新兵</td><td>0</td><td>×0.85</td><td>×0.85</td><td>×1.2</td></tr>
-      <tr><td>並</td><td>100</td><td>×1</td><td>×1</td><td>×1</td></tr>
-      <tr><td>熟練</td><td>250</td><td>×1.1</td><td>×1.1</td><td>×0.85</td></tr>
-      <tr><td>精鋭</td><td>450</td><td>×1.2</td><td>×1.2</td><td>×0.7</td></tr>
-      <tr><td>古強者</td><td>700</td><td>×1.3</td><td>×1.3</td><td>×0.6</td></tr>
+      <tr><td>★☆☆☆☆</td><td data-v="ranks.0.exp"></td><td data-v="ranks.0.mul" data-x></td><td data-v="ranks.0.mul" data-x></td><td data-v="ranks.0.morale" data-x></td></tr>
+      <tr><td>★★☆☆☆</td><td data-v="ranks.1.exp"></td><td data-v="ranks.1.mul" data-x></td><td data-v="ranks.1.mul" data-x></td><td data-v="ranks.1.morale" data-x></td></tr>
+      <tr><td>★★★☆☆</td><td data-v="ranks.2.exp"></td><td data-v="ranks.2.mul" data-x></td><td data-v="ranks.2.mul" data-x></td><td data-v="ranks.2.morale" data-x></td></tr>
+      <tr><td>★★★★☆</td><td data-v="ranks.3.exp"></td><td data-v="ranks.3.mul" data-x></td><td data-v="ranks.3.mul" data-x></td><td data-v="ranks.3.morale" data-x></td></tr>
+      <tr><td>★★★★★</td><td data-v="ranks.4.exp"></td><td data-v="ranks.4.mul" data-x></td><td data-v="ranks.4.mul" data-x></td><td data-v="ranks.4.morale" data-x></td></tr>
     </table>
     <ul>
-      <li>守備の練度が精鋭以上の部隊は、接敵中に旋回・入れ替えをしても隊列が乱れません。</li>
-      <li>経験は戦闘の終わりにまとめて入ります。自分から攻撃して倒した敵兵は攻撃の経験に、反撃で倒した敵兵は守備の経験になります（自分の最初の兵数と同じ数を倒すと100）。生き残った部隊には、勝てば <span class="v" data-v="expWin"></span>、負けても <span class="v" data-v="expLose"></span> を攻撃・守備それぞれに足します。練度は戦闘中には変わりません。</li>
+      <li>守備の練度が★ <span class="v" data-v="steadyStars"></span> つ以上の部隊は、接敵中に旋回・入れ替えをしても隊列が乱れません。</li>
+      <li>経験は戦闘の終わりにまとめて入ります。自分から攻撃して死傷させた敵兵は攻撃の経験に、反撃で死傷させた敵兵は守備の経験になります（自分の最初の兵数と同じ数を倒すと100）。生き残った部隊には、勝てば <span class="v" data-v="expWin"></span>、負けても <span class="v" data-v="expLose"></span> を攻撃・守備それぞれに足します。練度は戦闘中には変わりません。</li>
       <li>最初の練度はマップ編集で部隊ごとに決められます（決めなければ並）。単発の戦闘では、上がった練度は次に持ち越しません（キャンペーンで引き継ぎます）。</li>
     </ul>
     <h3>負傷と戦闘の結果</h3>
     <ul>
-      <li>戦闘で失った兵のうち <span class="v" data-v="woundRate" data-pct></span> は負傷、残りは戦死です。負傷兵はその戦闘ではもう戦えません。脱走した兵は戻りません。</li>
-      <li>戦闘が終わると、負傷兵は勝てば <span class="v" data-v="recoverWin" data-pct></span>、負ければ <span class="v" data-v="recoverLose" data-pct></span> が復帰します。</li>
-      <li>決着すると、部隊ごとの倒した敵（攻めて／守って）、戦死・負傷・脱走、戦後の兵数、経験と練度の変化が「戦闘の結果」に出ます。</li>
+      <li>兵士は <b>健常（HP30）→ 軽傷（20）→ 重傷（10）→ 死亡</b> と進みます。打撃は健常の兵から、軽傷 <span class="v" data-v="woundLight" data-pct></span>・重傷 <span class="v" data-v="woundHeavy" data-pct></span>・死亡 <span class="v" data-v="woundDead" data-pct></span> の割合で割り振られます。健常の兵がいなくなるほどの大きな打撃は、軽傷の兵を重傷・死亡へ、重傷の兵を死亡へと進めます。全員を死なせるには、健常の兵1人あたり3段階分の損害が要ります。</li>
+      <li>負傷した兵も戦いますが、戦う力は軽傷 <span class="v" data-v="lightEff" data-x></span>・重傷 <span class="v" data-v="heavyEff" data-x></span> です。部隊の情報欄に、兵数とその内訳（軽傷・重傷）が出ます。</li>
+      <li>敵と接していない時間帯（手番）には、負傷兵1人あたりHPが <span class="v" data-v="woundHealHp"></span> 回復します（1日で4倍。重傷は5日、軽傷は2日半で健常に戻る目安）。村や自軍の本陣では、さらに手当てが進みます。脱走した兵は戻りません。</li>
+      <li>決着すると、部隊ごとの死傷させた敵（攻めて／守って）、戦死・脱走、残った負傷兵、戦後の兵数、練度の変化が「戦闘の結果」に出ます。</li>
     </ul>
 
     <h2 id="supply">兵糧と補給</h2>
