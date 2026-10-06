@@ -131,7 +131,7 @@ function newGame(edit){
   else (map.units||[]).forEach(o=>{const c=fromCR(o.col,o.row);add(o.side,o.type,c.q,c.r,o.f,o.men,o.rankA,o.rankD);});
   units.filter(u=>cavBlocked(u.type,u)).forEach(u=>{const c=[...cells.values()].filter(c=>!cavBlocked(u.type,c)&&!units.some(x=>x.q===c.q&&x.r===c.r)).sort((a,b)=>dist(a,u)-dist(b,u))[0];if(c){u.q=c.q;u.r=c.r;}}); // 山に置かれた騎兵は近くの山以外へよける
   renumber(units);
-  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false},stock:{},gone:[],result:null}; // gone＝この戦闘でいなくなった部隊（結果に使う）
+  state={units,mapId:map.id,mapName:map.name,mapRev:map.rev,phase:'setup',prompt:null,march:'hidden',side:'blue',turn:1,selected:null,log:[],winner:null,history:[],memo:{blue:{},red:{}},known:{},taken:{blue:false,red:false},stock:{},gone:[],result:null,retreating:[]}; // gone＝この戦闘でいなくなった部隊（結果に使う）
   // 本陣・村・陣地・砦の蓄え（1人1食分＝1）。本陣を「全軍の何日分」で決めたマップは、開始時の兵数×2食×日数にする
   featureAt.forEach((f,k)=>{if(!holdsStock(f))return;
     if(f.type==='honjin'&&f.stockDays!=null){const eat=units.filter(u=>u.side===f.side).reduce((n,u)=>n+u.men0*(cfg.units[u.type].eat??1),0);state.stock[k]=Math.round(f.stockDays*eat*2);} // 騎兵は5倍で数える
@@ -182,7 +182,7 @@ function startSide(side){state.units.filter(u=>u.side===side).forEach(u=>{
     if(rate>0)log(uname(u)+'が'+(f.type==='village'?'村':'本陣')+'で手当てを受けた（軽傷'+Math.round(u.w[1])+'・重傷'+Math.round(u.w[2])+'）','sys',u.side);
   }
 });
-  supplyTick(side);moraleTick(side);
+  regroupTick(side);supplyTick(side);moraleTick(side);
 }
 /* ---- 略奪と焼き払い（どちらもその部隊の手番を使い、取り消せない） ---- */
 // 略奪：占領した敵の本陣か、蓄えのある村で。自分の兵糧（輜重なら積み荷も）を満たし、隣の自軍の輜重にも積む
@@ -376,7 +376,7 @@ function casualty(t,r,by,mode){
   if(!r||!(r.affected>0))return;
   const st=t.st||(t.st={killA:0,killD:0,dead:0,wounded:0,deserted:0});
   st.dead+=r.dead;
-  if(by){const b=by.st||(by.st={killA:0,killD:0,dead:0,wounded:0,deserted:0});b[mode==='def'?'killD':'killA']+=r.affected;}
+  if(by){const b=by.st||(by.st={killA:0,killD:0,dead:0,wounded:0,deserted:0});b[mode==='def'?'killD':'killA']+=r.affected;b[mode==='def'?'ptsD':'ptsA']=(b[mode==='def'?'ptsD':'ptsA']||0)+r.pts;}
 }
 /* ---- 士気 ---- */
 const moraleOf=u=>Math.round(u.morale??100);
@@ -399,6 +399,34 @@ function moraleTick(side){
   });
   checkWinner();
 }
+/* ---- 退却：盤面から消え、2日後（8回の時間帯のあと）に本陣で再編されて戻る ----
+   戻る兵数は退却したときの兵数×士気％（健常・軽傷・重傷の割合はそのまま）、戻ったときの士気は元の士気の二乗（50→25）。
+   本陣を占領されている（または本陣がない）と使えない */
+const RETREAT_TURNS=8;
+const retreatBlock=u=>{const hq=honjinOf(u.side);return !hq?'本陣がないので退却できません':state.taken[u.side]?'本陣が占領されているので退却できません。本陣を取り返してください':'';};
+const canRetreat=u=>state.phase==='battle'&&!state.winner&&u.side===state.side&&!u.attacked&&!u.pending&&u.mp>=cfg.units[u.type].mp;
+function retreat(u){
+  if(!canRetreat(u)||retreatBlock(u))return;
+  const m=u.morale??100,k=m/100,[F,L,Hh]=wOf(u),men=menOf(u),back=Math.round((F+L+Hh)*k);
+  state.units=state.units.filter(x=>x!==u);state.history=[];state.selected=null;
+  u.hidden=false;u.pending=false;u.order=null;
+  state.retreating.push({u,due:state.turn+RETREAT_TURNS,w:[F*k,L*k,Hh*k],morale:m*m/100});
+  log(uname(u)+'が退却した（'+men+'人。士気'+Math.round(m)+'なので、およそ'+back+'人が2日後に本陣で再編される）','kill',u.side);
+  checkWinner();render();
+}
+// 手番のはじめ：期日が来た部隊を、本陣のマス（ふさがっていれば周りの空いたマス）に戻す
+function regroupTick(side){
+  state.retreating.filter(x=>x.u.side===side&&state.turn>=x.due).forEach(x=>{
+    const hq=honjinOf(side);if(!hq||state.taken[side])return; // 本陣が占領されていれば、取り返すまで待つ
+    const spots=[hq,...DIRS.map(([dq,dr])=>({q:hq.q+dq,r:hq.r+dr})).sort(()=>Math.random()-0.5)].filter(p=>cells.has(key(p.q,p.r))&&!unitAt(p.q,p.r)&&!cavBlocked(x.u.type,p));
+    if(!spots.length)return;
+    const u=x.u;state.retreating=state.retreating.filter(y=>y!==x);
+    u.q=spots[0].q;u.r=spots[0].r;u.f=DEF_F[side];u.w=x.w;syncHp(u);u.morale=x.morale;u.dis=0;u.exposed=false;
+    if(menOf(u)<=0){log(uname(u)+'は再編できる兵が残らなかった','kill',side);state.gone.push(u);return;}
+    state.units.push(u);
+    log(uname(u)+'が本陣で再編された（'+menOf(u)+'人、士気'+moraleOf(u)+'）','kill',side);
+  });
+}
 /* ---- 兵の状態：健常・軽傷・重傷（u.w＝[健常, 軽傷, 重傷] の人数） ----
    兵士1人のHPは、健常30・軽傷20・重傷10（1段階＝兵種の「1人あたりのHP」）。u.hp は残りのHPの合計（攻撃の見込みや全滅の判定に使う） */
 const STEP=u=>cfg.units[u.type].hp;
@@ -414,7 +442,7 @@ function simDamage(u,dmg){
   const A=Math.min(F,S/perA);F-=A;L+=A*l;H+=A*h;dead+=A*d;toL+=A*l;toH+=A*h;S-=A*perA;
   const hl=h+d?h/(h+d):1,perB=hl+2*(1-hl),B=S>0?Math.min(L,S/perB):0;L-=B;H+=B*hl;dead+=B*(1-hl);toH+=B*hl;S-=B*perB;
   const C=S>0?Math.min(H,S):0;H-=C;dead+=C;
-  return {w:[F,L,H],dead,toL,toH,affected:A+B+C};
+  return {w:[F,L,H],dead,toL,toH,affected:A+B+C,pts:A*perA+B*perB+C}; // pts＝削った段階の数（軽傷1・重傷2・死亡3）
 }
 function applyDamage(u,dmg){const r=simDamage(u,dmg);u.w=r.w;syncHp(u);return r;}
 const lossOf=(u,dmg)=>Math.round(simDamage(u,dmg).affected); // 打撃で死傷する人数
@@ -712,17 +740,20 @@ function removeUnitDead(u,by){
 }
 /* ---- 戦闘の終わり：経験をまとめる（単発の戦闘では表示だけ。キャンペーンで引き継ぐ） ---- */
 function finishBattle(){
-  const all=[...state.units,...state.gone.filter(u=>!state.units.includes(u))];
+  // 再編中の部隊は、再編された人数で生き残ったものとして数える
+  state.retreating.forEach(x=>{if(!state.units.includes(x.u)){x.u.w=x.w;syncHp(x.u);x.u.retreated=true;}});
+  const all=[...state.units,...state.retreating.map(x=>x.u),...state.gone.filter(u=>!state.units.includes(u))].filter((u,i,a)=>a.indexOf(u)===i);
   state.result=all.map(u=>{
-    const st=u.st||{killA:0,killD:0,dead:0,wounded:0,deserted:0},win=u.side===state.winner,alive=state.units.includes(u);
+    const st=u.st||{killA:0,killD:0,dead:0,wounded:0,deserted:0},win=u.side===state.winner,alive=state.units.includes(u)||!!u.retreated;
     const bonus=alive?(win?cfg.expWin:cfg.expLose):0,[F,L,H]=wOf(u);
-    const gA=alive?st.killA/u.men0*100+bonus:0,gD=alive?st.killD/u.men0*100+bonus:0;
-    return {id:u.id,side:u.side,name:uname(u),alive,killA:Math.round(st.killA),killD:Math.round(st.killD),dead:Math.round(st.dead),light:alive?Math.round(L):0,heavy:alive?Math.round(H):0,deserted:Math.round(st.deserted),
+    // 経験：削った段階の数（軽傷1・重傷2・死亡3）。自分の兵数と同じ人数を死なせて（3×人数）100
+    const gA=alive?(st.ptsA||0)/(3*u.men0)*100+bonus:0,gD=alive?(st.ptsD||0)/(3*u.men0)*100+bonus:0;
+    return {id:u.id,side:u.side,name:uname(u),alive,retreated:!!u.retreated,killA:Math.round(st.killA),killD:Math.round(st.killD),dead:Math.round(st.dead),light:alive?Math.round(L):0,heavy:alive?Math.round(H):0,deserted:Math.round(st.deserted),
       menAfter:alive?menOf(u):0,gainA:Math.round(gA),gainD:Math.round(gD),
       rankA:[rankOfExp(u.expA),rankOfExp(u.expA+gA)],rankD:[rankOfExp(u.expD),rankOfExp(u.expD+gD)]};
   });
 }
-function checkWinner(){['blue','red'].forEach(s=>{if(!state.winner&&!state.units.some(u=>u.side===s)){state.winner=s==='blue'?'red':'blue';log(SIDE_NAME[state.winner]+'の勝利','kill');finishBattle();}});}
+function checkWinner(){['blue','red'].forEach(s=>{if(!state.winner&&!state.units.some(u=>u.side===s)&&!(state.retreating.some(x=>x.u.side===s)&&!state.taken[s])){state.winner=s==='blue'?'red':'blue';log(SIDE_NAME[state.winner]+'の勝利','kill');finishBattle();}});}
 // 隠れた部隊からの攻撃。反撃は受けない。奇襲なら倍率がかかり、相手は混乱する。
 // 弓兵が2マス以上離れて射た場合は隠れたままで、相手には矢の来た方向だけが分かる
 function hiddenStrike(a,t,amb){
@@ -1136,7 +1167,7 @@ function renderPanel(sel,mine,v){
   if(state.winner){
     const res=state.result||[],rk=(p)=>p[0]===p[1]?starsText(p[0]):starsText(p[0])+' → <b>'+starsText(p[1])+'</b>';
     // 部隊ごとに：戦後の兵数、倒した敵（攻めて／守って）、失った兵（戦死・負傷と復帰・脱走）、経験と練度
-    const table=s=>'<ul class="result">'+res.filter(r=>r.side===s).map(r=>'<li><div class="rh"><b>'+esc(r.name)+'</b><span>'+(r.alive?'戦後 '+r.menAfter+'人':'壊滅')+'</span></div>'+
+    const table=s=>'<ul class="result">'+res.filter(r=>r.side===s).map(r=>'<li><div class="rh"><b>'+esc(r.name)+'</b><span>'+(r.retreated?'退却・再編 '+r.menAfter+'人':r.alive?'戦後 '+r.menAfter+'人':'壊滅')+'</span></div>'+
       '<div>死傷させた敵　攻 '+r.killA+'・守 '+r.killD+'</div>'+
       '<div>失った兵　戦死 '+r.dead+(r.deserted?'・脱走 '+r.deserted:'')+'</div>'+(r.alive&&(r.light||r.heavy)?'<div>負傷　軽傷 '+r.light+'・重傷 '+r.heavy+'</div>':'')+
       (r.alive?'<div>練度　攻撃 '+rk(r.rankA)+'</div><div>練度　守備 '+rk(r.rankD)+'</div>':'')+'</li>').join('')+'</ul>';
@@ -1145,7 +1176,8 @@ function renderPanel(sel,mine,v){
     tb.innerHTML='<div class="turn side-'+state.winner+'">'+SIDE_NAME[state.winner]+'の勝利</div>'+(aiRed&&state.aiStyle?'<p class="hint" style="margin-top:.2rem">赤軍の作戦：'+(state.aiSecret&&!state.winner?'？（決着まで伏せる）':AI_STYLES[state.aiStyle])+'</p>':'')+'<div class="row"><button id="bNew">もう一度</button><button class="ghost" id="bUndo"'+(state.history.length?'':' disabled')+'>取り消し</button><button class="ghost" id="bEdit">配置からやり直す</button><button class="ghost" id="bCfg">数値調整</button></div>';
   }else{
     tb.innerHTML='<div class="turn side-'+state.side+'">'+timeLabel()+'　'+SIDE_NAME[state.side]+'の手番</div>'+(isNight()?'<p class="hint" style="margin-top:.2rem">夜：視界は前方'+cfg.visFrontNight+'マス・後方'+cfg.visRearNight+'マス</p>':'')+
-      '<p class="hint" style="margin-top:.2rem">マップ：'+esc(state.mapName)+'</p>'+(aiRed&&state.aiStyle?'<p class="hint" style="margin-top:.2rem">赤軍の作戦：'+(state.aiSecret&&!state.winner?'？（決着まで伏せる）':AI_STYLES[state.aiStyle])+'</p>':'')+
+      '<p class="hint" style="margin-top:.2rem">マップ：'+esc(state.mapName)+'</p>'+
+      state.retreating.filter(x=>v==null||x.u.side===v).map(x=>'<p class="hint" style="margin-top:.1rem">再編中：'+uname(x.u)+'（'+Math.round(x.w[0]+x.w[1]+x.w[2])+'人、'+(state.taken[x.u.side]?'本陣を取り返すまで戻れない':'あと'+Math.max(0,x.due-state.turn)+'時間帯')+'）</p>').join('')+(aiRed&&state.aiStyle?'<p class="hint" style="margin-top:.2rem">赤軍の作戦：'+(state.aiSecret&&!state.winner?'？（決着まで伏せる）':AI_STYLES[state.aiStyle])+'</p>':'')+
       (busy?'<p class="hint" style="margin-top:.4rem">赤軍が行動中です…</p>':'')+
       '<div class="row"><button id="bEnd"'+(busy?' disabled':'')+'>ターン終了</button><button class="ghost" id="bUndo"'+(state.history.length&&!busy?'':' disabled')+'>取り消し</button><button class="ghost" id="bNew">最初から</button></div>'+
       '<div class="row"><button class="ghost" id="bEdit"'+(busy?' disabled':'')+'>配置からやり直す</button><button class="ghost" id="bMaps2">マップ編集</button><button class="ghost" id="bCfg">数値調整</button><button class="ghost" id="bMan">説明書</button></div>'+
@@ -1193,6 +1225,7 @@ function renderPanel(sel,mine,v){
         (sel.hidden?'<div class="row"><span class="hint">行軍（M）</span><button id="bMH" class="'+(state.march==='normal'?'ghost':'on')+'">隠蔽行軍（+'+cfg.hideMove+'/マス）</button><button id="bMN" class="'+(state.march==='normal'?'on':'ghost')+'">通常行軍</button></div>':'')+
         (state.swap===sel.id?'<p class="hint" style="margin-top:.4rem">入れ替える味方をクリックしてください（数字は自分／相手の移動コスト。Esc でやめる）。</p><div class="row"><button class="ghost" id="bSwapX">やめる</button></div>'
           :(swapTargets(sel).length?'<div class="row"><button class="ghost" id="bSwap">隣の味方と入れ替え（X）</button></div>':''))+
+        (canRetreat(sel)?'<div class="row"><button class="ghost" id="bRetreat"'+(retreatBlock(sel)?' title="'+retreatBlock(sel)+'"':'')+'>退却（2日後に本陣で再編）</button></div>'+(retreatBlock(sel)?'<p class="hint">'+retreatBlock(sel)+'</p>':''):'')+
         (canDeposit(sel)?'<div class="row"><button id="bDep">ここに兵糧を蓄える（積み荷'+Math.round(sel.cargo)+'）</button></div>':'')+
         (canLoot(sel)||canBurn(sel)?'<div class="row">'+(canLoot(sel)?'<button id="bLoot">'+lootWord(sel)+'（L）</button>':'')+(canBurn(sel)?'<button class="ghost" id="bBurn">'+burnTarget(sel)+'を焼き払う</button>':'')+'</div>':'')+
         (onCover(sel)&&!sel.pending&&(!sel.hidden||sel.sprung)?'<div class="row"><button id="bHide"'+(canHide(sel)?'':' disabled')+'>隠蔽する（H）</button></div>':''):'');
@@ -1200,6 +1233,8 @@ function renderPanel(sel,mine,v){
   const on=(id,f)=>{const el=document.getElementById(id);if(el)el.onclick=f;};
   on('bEnd',endTurn);on('bUndo',undo);on('bNew',()=>newGame(false));on('bEdit',editFormation);on('bCfg',openSettings);on('bMaps2',openMaps);on('bMan',openManual);
   on('bL',()=>tryTurn(sel,-1));on('bR',()=>tryTurn(sel,1));on('bAbout',()=>tryTurn(sel,3));
+  on('bRetreat',()=>{const b=retreatBlock(sel);if(b){alert(b);return;}const m=Math.round(sel.morale??100);
+    if(confirm(uname(sel)+'を退却させますか？\n盤面から消え、2日後に本陣で再編されて戻ります。\n戻る兵：今の兵数の'+m+'%（およそ'+Math.round(menOf(sel)*m/100)+'人）、戻ったときの士気：'+Math.round(m*m/100)))retreat(sel);});
   on('bSwap',()=>{state.swap=sel.id;render();});on('bSwapX',()=>{state.swap=null;render();});
   on('bLoot',()=>loot(sel));on('bDep',()=>deposit(sel));on('bBurn',()=>{if(confirm(burnTarget(sel)+'を焼き払いますか？元に戻せません。'))burn(sel);});
   on('bOrder',()=>{state.pick=sel.id;render();});on('bPickX',()=>{state.pick=null;render();});on('bOrderX',()=>{sel.order=null;log(uname(sel)+'の往復を解除','sys',sel.side);render();});
