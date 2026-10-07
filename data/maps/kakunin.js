@@ -49,27 +49,33 @@ HEX_DATA.maps.push({
   {
    "side": "blue",
    "type": "spear",
-   "col": 6,
-   "row": 5,
-   "f": 0,
-   "men": 100
+   "col": 7,
+   "row": 2,
+   "f": 5,
+   "men": 500,
+   "rankA": 2,
+   "rankD": 2
   },
   {
    "side": "red",
    "type": "spear",
-   "col": 7,
-   "row": 5,
-   "f": 3,
-   "men": 100
-  },
-  {
-   "side": "blue",
-   "type": "cav",
    "col": 8,
    "row": 5,
    "f": 4,
-   "men": 100
+   "men": 1000,
+   "rankA": 0,
+   "rankD": 0
+  },
+  {
+   "side": "blue",
+   "type": "spear",
+   "col": 7,
+   "row": 5,
+   "f": 3,
+   "men": 300,
+   "rankA": 4,
+   "rankD": 4
   }
  ],
- "rev": 7
+ "rev": 77
 });
