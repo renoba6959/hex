@@ -522,12 +522,12 @@ const disName=u=>u.dis===2?'混乱':'隊列の乱れ';
 const inZoc=(q,r,side)=>state.units.some(e=>e.side!==side&&!e.hidden&&dist(e,{q,r})===1&&relAngle(e,{q,r})<=60+EPS); // 隠れた部隊はZOCを持たない
 // 挟撃：2つ以上の敵部隊のZOC（敵の正面の隣）に同時に入っている。隠れている部隊は交戦していないので挟撃されない
 const zocCount=(p,side)=>state.units.filter(e=>e.side!==side&&!e.hidden&&dist(e,p)===1&&relAngle(e,p)<=60+EPS).length;
-const pincered=u=>!(u.hidden||u.hid)&&!!u.side&&zocCount(u,u.side)>=2;
-function moveCost(u,d){
+// 敵のZOC（敵の正面と左右斜め前の3マス）に入っているか。入っている部隊は、旋回1回か1マスの移動1回のどちらか1つだけ（隠れている部隊は対象外）
+const pinned=u=>!(u.hidden||u.hid)&&!!u.side&&zocCount(u,u.side)>=1;
+function moveCost(u,d,swap=false){ // swap＝味方との入れ替え（挟撃中でもできる）
   const rel=(d-u.f+6)%6,dirCost=rel===0?cfg.mvF:(rel===1||rel===5)?cfg.mvFD:(rel===2||rel===4)?cfg.mvRD:cfg.mvR;
   const dest={q:u.q+DIRS[d][0],r:u.r+DIRS[d][1]};
   if(cavBlocked(u.type,dest))return Infinity;
-  if(rel>=2&&rel<=4&&pincered(u))return Infinity; // 挟撃中は後ずさりできない（向きを変えてから動く）
   if(fenceAt(dest))return cfg.fenceMove; // 柵は向きに関係なく一定のコストで乗り越える
   const st=structType(dest);
   return dirCost+terCfg(dest).move+(st==='fort'||st==='jinchi'?cfg.fortMove:0); // 進入先の地形（と陣地・砦）のコストを加算
@@ -596,7 +596,6 @@ function tryMove(u,d){
   if(state.prompt||state.phase!=='battle'||state.winner||u.side!==state.side||u.attacked||u.pending)return;
   const nq=u.q+DIRS[d][0],nr=u.r+DIRS[d][1];
   if(!cells.has(key(nq,nr)))return;
-  if(engaged(u)&&(d-u.f+6)%6!==3)return; // 敵と接している部隊は、旋回するか真後ろへ下がることしかできない
   if(u.order&&!autoMoving){u.order=null;log(uname(u)+'の往復を解除（手で動かした）','sys',u.side);}
   const o=unitAt(nq,nr);
   if(o&&(o.side===u.side||spotted(o,u.side)))return; // 見えている部隊のマスには入れない（見えていない敵なら遭遇）
@@ -612,7 +611,7 @@ function tryMove(u,d){
     render();return;
   }
   pushHistory();
-  const rel=(d-u.f+6)%6,wasEngaged=engaged(u); // 敵と接したまま動き出したら、1マスで止まる（後ずさりで回り込めないように）
+  const rel=(d-u.f+6)%6,wasPinned=pinned(u); // 敵のZOCの中から動き出したら、1マスで止まる
   u.q=nq;u.r=nr;u.mp-=cost;if(rel===1||rel===5)u.f=d;
   const hq=featOf(u);
   if(hq?.type==='honjin'&&!state.winner){ // 本陣の占領と奪還（即勝利ではなく、士気が大きく動く）
@@ -633,7 +632,7 @@ function tryMove(u,d){
     else noticeCheck(u);
   }
   if(inZoc(nq,nr,u.side)){u.mp=0;log(uname(u)+'が敵のZOCに入り停止','sys',privOf(u));}
-  else if(wasEngaged&&u.mp>0){u.mp=0;log(uname(u)+'は敵と接していたので、1マス動いたところで止まった','sys',privOf(u));}
+  else if(wasPinned&&u.mp>0){u.mp=0;log(uname(u)+'は敵のZOCの中にいたので、1マス動いたところで止まった','sys',privOf(u));}
   render();
   if(!u.hidden)return reactions(u);
 }
@@ -641,7 +640,7 @@ function tryMove(u,d){
 // 両方がそれぞれ相手のマスへの移動コストを払う。向きはそのまま。敵と接していれば両方の隊列が乱れる（軽い乱れ）
 function swapCosts(a,b){
   const d=DIRS.findIndex(([dq,dr])=>a.q+dq===b.q&&a.r+dr===b.r);if(d<0)return null;
-  return {ca:moveCost(a,d),cb:moveCost(b,(d+3)%6)};
+  return {ca:moveCost(a,d,true),cb:moveCost(b,(d+3)%6,true)}; // 挟撃されていても、味方との交代はできる
 }
 function canSwap(a,b){
   if(!a||!b||a===b||a.side!==b.side||state.phase!=='battle'||state.winner||a.side!==state.side||state.prompt)return false;
@@ -794,11 +793,12 @@ function answerAmbush(go){const p=state.prompt;if(!p)return;state.prompt=null;p.
 const turnCostOf=(u,delta,contact)=>Math.abs(delta)===3?(contact?cfg.contactAboutCost:cfg.aboutCost):(contact?cfg.contactTurnCost:cfg.turnCost);
 function tryTurn(u,delta){
   if(state.prompt||state.phase!=='battle'||state.winner||u.side!==state.side)return;
+  if(Math.abs(delta)===3&&pinned(u))return; // 敵のZOCの中では60度の旋回1回だけ（回れ右は旋回3回分なのでできない）
   const contact=engaged(u),cost=turnCostOf(u,delta,contact); // 隠れている部隊は交戦していないので、普段どおり
   if(u.mp<cost)return;
   pushHistory();
   u.f=(u.f+delta+6)%6;u.mp-=cost;
-  if(contact)u.mp=0; // 接敵中は、1度の旋回か真後ろへの後退のどちらか1つだけ（旋回したら移動はおしまい。攻撃はできる）
+  if(pinned(u))u.mp=0; // 敵のZOCの中では、旋回1回か1マスの移動1回のどちらか1つだけ（旋回したら移動はおしまい。攻撃はできる）
   noticeCheck(u);
   if(contact&&!u.dis&&!RD(u).steady){setDis(u,1);log(uname(u)+'が接触中に'+(Math.abs(delta)===3?'回れ右':'旋回')+'、隊列が乱れた（攻防×'+cfg.disorder+'）','sys',privOf(u));}
   render();
@@ -894,12 +894,12 @@ function planFor(u){
     const s=queue.splice(bi,1)[0];if(best.get(sk(s))!==s)continue;
     const push=n=>{const k=sk(n),o=best.get(k);if(!o||o.mp<n.mp){best.set(k,n);queue.push(n);}};
     const contact=!s.hid&&enemies.some(e=>dist(e,s)===1),tc=contact?cfg.contactTurnCost:cfg.turnCost; // 隠れたままなら交戦していない
-    [-1,1,3].forEach(dl=>{const c=turnCostOf(u,dl,contact);if(s.mp>=c)push({...s,f:(s.f+dl+6)%6,mp:contact?0:s.mp-c,dis:Math.max(s.dis|0,contact?1:0),prev:s,act:{t:'turn',dl}});});
+    const pin=!s.hid&&zocCount(s,u.side)>=1; // 敵のZOCの中なら、旋回か1マスの移動のどちらか1つだけ
+    (pin?[-1,1]:[-1,1,3]).forEach(dl=>{const c=turnCostOf(u,dl,contact);if(s.mp>=c)push({...s,f:(s.f+dl+6)%6,mp:pin?0:s.mp-c,dis:Math.max(s.dis|0,contact?1:0),prev:s,act:{t:'turn',dl}});});
     for(let d=0;d<6;d++){
       const nq=s.q+DIRS[d][0],nr=s.r+DIRS[d][1],k=key(nq,nr);
       if(!cells.has(k)||occ.has(k))continue;
-      const base=moveCost(s,d),rel=(d-s.f+6)%6,f=(rel===1||rel===5)?d:s.f,zoc=inZoc(nq,nr,u.side)||contact; // 接敵中から動いたら1マスで止まる
-      if(contact&&rel!==3)continue; // 接敵中は真後ろへの後退だけ
+      const base=moveCost(s,d),rel=(d-s.f+6)%6,f=(rel===1||rel===5)?d:s.f,zoc=inZoc(nq,nr,u.side)||pin; // ZOCに入るか、ZOCの中から動いたら止まる
       const inFront=state.units.some(e=>e.side!==u.side&&!e.hidden&&spotted(e,u.side)&&dist(e,{q:nq,r:nr})===1&&facesMe(e,{q:nq,r:nr}));
       if(s.hid&&!inFront&&onCover({q:nq,r:nr})&&s.mp>=base+cfg.hideMove) // 隠蔽行軍（敵の前方の隣は見つかるので入らない）
         push({...s,q:nq,r:nr,f,mp:zoc?0:s.mp-base-cfg.hideMove,prev:s,act:{t:'move',d,hide:true}});
@@ -1033,7 +1033,7 @@ function render(){
   const swapping=new Map();if(mine&&state.swap===sel.id)swapTargets(sel).forEach(b=>{const c=swapCosts(sel,b);swapping.set(key(b.q,b.r),c);});
   if(mine&&!sel.attacked&&!sel.pending&&state.swap!==sel.id){ // 入れ替えを選んでいる間は、入れ替えの相手だけを光らせる
     for(let d=0;d<6;d++){const nq=sel.q+DIRS[d][0],nr=sel.r+DIRS[d][1],k=key(nq,nr);
-      if(cells.has(k)&&!seenAt(nq,nr)&&!(engaged(sel)&&(d-sel.f+6)%6!==3)){const c=stepCost(sel,d);if(sel.mp>=c)moves.set(k,{d,c});}} // 接敵中は真後ろへの後退だけ
+      if(cells.has(k)&&!seenAt(nq,nr)){const c=stepCost(sel,d);if(sel.mp>=c)moves.set(k,{d,c});}}
     cells.forEach((c,k)=>{if(canHitStruct(sel,c))structTargets.set(k,structName(c)+' −'+structDamage(sel));});
     state.units.forEach(t=>{if(canAttack(sel,t)&&seen(t,v)){const r=computeAttack(sel,t,surprise(sel)),c=(r.dmg>=t.hp||sel.hidden||t.worked)?null:computeCounter(sel,t,r.dmg);targets.set(key(t.q,t.r),{...r,loss:lossOf(t,r.dmg),closs:c?lossOf(sel,c.dmg):0});}});
   }
@@ -1202,7 +1202,7 @@ function renderPanel(sel,mine,v){
     const U=cfg.units[sel.type],contact=engaged(sel),tc=turnCostOf(sel,1,contact),ac=turnCostOf(sel,3,contact);
     const canT=mine&&sel.mp>=tc;
     const st=[];if(sel.hidden&&(sel.side===v||v==null))st.push(sel.sprung?'隠蔽中（奇襲は済み）':sel.noticed?'隠蔽中（気配を悟られた。次の奇襲は×'+cfg.ambushNoticed+'）':'隠蔽中');if(sel.pending)st.push('隠蔽の準備中（手番の終わりに隠れる）');if(sel.worked)st.push('工事中（次の手番まで無防備）');
-    if(sel.shotFrom!=null)st.push(DIR_NAME[sel.shotFrom]+'の方向から矢を受けた');if(contact)st.push(pincered(sel)?'挟撃されている（後ずさりできない。向きを変えてから動く）':'接触中');if(sel.dis)st.push(disName(sel)+'（攻防×'+disMul(sel)+(sel.dis===2?'、反撃できない':'')+'）');if(sel.attacked)st.push('攻撃済み');
+    if(sel.shotFrom!=null)st.push(DIR_NAME[sel.shotFrom]+'の方向から矢を受けた');if(pinned(sel))st.push('敵のZOCの中（60度の旋回1回か1マスの移動1回のどちらか1つだけ）');else if(contact)st.push('接触中');if(sel.dis)st.push(disName(sel)+'（攻防×'+disMul(sel)+(sel.dis===2?'、反撃できない':'')+'）');if(sel.attacked)st.push('攻撃済み');
     ub.innerHTML='<div class="uname">'+uname(sel)+'</div><dl>'+
       '<dt>兵数</dt><dd>'+menOf(sel)+' / '+sel.men0+'人'+(sel.w&&(sel.w[1]>=0.5||sel.w[2]>=0.5)?'（軽傷 '+Math.round(sel.w[1])+'、重傷 '+Math.round(sel.w[2])+'）':'')+'</dd>'+
       '<dt>士気</dt><dd>'+moraleOf(sel)+(moraleOf(sel)<cfg.desertLine?'（脱走が出ている）':'')+'</dd>'+
@@ -1216,8 +1216,8 @@ function renderPanel(sel,mine,v){
       '<dt>射程</dt><dd>'+(U.rmin===U.rmax?U.rmin:U.rmin+'〜'+U.rmax)+'</dd>'+
       '<dt>地形</dt><dd>'+terLabel(sel)+'</dd>'+(featLabel(sel)?'<dt>拠点</dt><dd>'+featLabel(sel)+'</dd>':'')+
       '<dt>状態</dt><dd>'+(st.join('、')||'通常')+'</dd></dl>'+
-      (mine&&!busy?'<div class="row"><button id="bL"'+(canT?'':' disabled')+'>左に旋回（'+tc+'）</button><button id="bR"'+(canT?'':' disabled')+'>右に旋回（'+tc+'）</button><button id="bAbout"'+(sel.mp>=ac?'':' disabled')+'>回れ右（'+ac+'・R）</button></div>'+
-        (contact?'<p class="hint" style="margin-top:.4rem">敵と接しているので、できるのは「1度の旋回」か「真後ろへ1マスの後退」のどちらか1つだけです（どちらのあとも攻撃はできます）。'+(!sel.dis&&!RD(sel).steady?'旋回すると隊列が乱れます（攻防×'+cfg.disorder+'）。':'')+'</p>':'')+
+      (mine&&!busy?'<div class="row"><button id="bL"'+(canT?'':' disabled')+'>左に旋回（'+tc+'）</button><button id="bR"'+(canT?'':' disabled')+'>右に旋回（'+tc+'）</button><button id="bAbout"'+(sel.mp>=ac&&!pinned(sel)?'':' disabled')+(pinned(sel)?' title="敵のZOCの中では回れ右はできません"':'')+'>回れ右（'+ac+'・R）</button></div>'+
+        (contact?'<p class="hint" style="margin-top:.4rem">'+(pinned(sel)?'敵のZOCの中なので、できるのは「60度の旋回1回」か「1マスの移動1回」のどちらか1つだけです（回れ右はできません）（どちらのあとも攻撃はできます）。':'')+(!sel.dis&&!RD(sel).steady?'旋回すると隊列が乱れます（攻防×'+cfg.disorder+'）。':'')+'</p>':'')+
         (sel.type==='supply'?(state.pick===sel.id?'<p class="hint" style="margin-top:.4rem">行き先のマスか、付いて行く味方の部隊をクリックしてください（Esc でやめる）。</p><div class="row"><button class="ghost" id="bPickX">やめる</button></div>'
           :'<div class="row"><button id="bOrder">往復を命じる</button>'+(sel.order?'<button class="ghost" id="bOrderX">往復を解除</button>':'')+'</div><p class="hint" style="margin-top:.3rem">本陣と行き先を自動で往復し、手番のはじめに動きます。積み荷が'+Math.round(cfg.supplyReturn*100)+'%を切ると本陣へ戻って積み込みます。手で動かすと解除されます。</p>'):'')+
         (sel.type==='spear'?(()=>{
